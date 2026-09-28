@@ -1,7 +1,7 @@
 ---
 title: "What is vector search?"
 description: "Vector search finds the items whose embeddings are closest to a query embedding, so results match by meaning rather than by exact words."
-sidebarTitle: "What is vector search?"
+sidebarTitle: "Vector search"
 pageType: "Concept"
 ---
 
@@ -16,10 +16,21 @@ words, which is why vector search is often called semantic search. Large collect
 are usually searched with an approximate nearest neighbor index, which gives up a small
 amount of accuracy in exchange for much lower latency.
 
-## How does semantic search work?
+<div className="learn-objectives">
+  <Card title="Learning objectives" icon="graduation-cap">
+    After reading this article you will be able to:
 
-A vector search system has an indexing path and a query path, and both must use the
-same embedding model.
+    - Explain how vector search matches by meaning using embeddings
+    - Describe the indexing and query paths of a vector search system
+    - Compare exact and approximate nearest neighbor search, including recall and top-k
+    - Recognize when vector search fails and when to add keyword search or filters
+  </Card>
+</div>
+
+## How does vector search work?
+
+A vector search system has an indexing path and a query path, and both must produce
+vectors in the same embedding space, which usually means the same embedding model.
 
 ```mermaid
 flowchart LR
@@ -33,71 +44,58 @@ flowchart LR
 ```
 
 1. **Embed the collection.** Each item, or each chunk of a long document, passes
-   through an embedding model that outputs one vector.
+   through an embedding model that typically outputs one vector.
 2. **Store and index the vectors.** Each vector is saved with an ID and usually some
    metadata, then organized into an index built for nearest neighbor search.
-3. **Embed the query** with the same model.
+3. **Embed the query** into the same embedding space, usually with the same model.
 4. **Find the nearest neighbors.** The system compares the query vector with stored
    vectors using a distance metric and returns the `k` closest, called the top k.
 5. **Use the results.** The application displays them, reranks them, or passes them
-   to a language model as context in retrieval-augmented generation (RAG).
+   to a language model as context in
+   [retrieval-augmented generation (RAG)](/learn/ai-memory/what-is-rag).
 
-## What are embeddings?
+## What role do embeddings play in vector search?
 
-An embedding is a fixed-length list of floating-point numbers that encodes an input as
-a point in a high-dimensional space. Text embedding models typically produce vectors
-with hundreds to a few thousand dimensions. Individual dimensions rarely mean anything
-on their own; what matters is how close vectors are.
-
-A few properties shape every vector search design:
-
-- **Embeddings are model-specific.** Vectors from two different models, or from two
-  versions of one model, are not comparable. Changing models means re-embedding the
-  collection.
-- **The dimension is fixed.** Every vector from a given model has the same length, and
-  an index is typically built for exactly one length.
-- **Many input types can be embedded.** Text, images, audio, and code all have
-  embedding models.
-- **Long inputs are usually chunked.** One vector can only summarize so much, so long
-  documents are split into passages and each passage is embedded separately.
+Embeddings are what vector search compares: each item and each query becomes a
+fixed-length list of numbers, and items with similar meaning end up close together.
+Vector search only works when stored vectors and query vectors come from the same
+embedding space, normally the same model or a query and document encoder pair trained
+together. Vectors from unrelated models, or from two versions of one model, are not
+comparable. How models produce embeddings, how dimensions and chunking affect them,
+and what changing models involves are covered in
+[What are vector embeddings?](/learn/vector-search/what-are-vector-embeddings)
 
 Closeness is computed with a distance or similarity function such as cosine
 similarity, Euclidean distance, dot product, or Manhattan distance. The right choice is
 usually the one the embedding model was trained with; see
 [vector distance metrics](/learn/vector-search/vector-distance-metrics).
 
-## Exact vs approximate nearest neighbor search
+## What is the difference between exact and approximate nearest neighbor search?
 
-Exact nearest neighbor search, also called k-nearest neighbor (kNN) or brute-force
-search, compares the query with every stored vector, so it always returns the true top
-k at a cost that grows linearly with the collection. Approximate nearest neighbor (ANN)
-search uses an index to examine a small, promising fraction of the vectors: much faster
-at scale, but it can occasionally miss a true neighbor.
+Exact search always returns the true top k, while approximate nearest neighbor (ANN)
+search uses an index to compare the query with only a small, promising fraction of the
+vectors, which is much faster at scale but can miss a true neighbor. Both address the
+k-nearest neighbor (kNN) problem: find the `k` stored vectors closest to the query.
 
-| | Exact (kNN) | Approximate (ANN) |
+The simplest exact method, brute-force or flat search, compares the query with every
+stored vector, so its cost grows linearly with the collection. Exact tree indexes such
+as k-d trees can skip work in low dimensions but approach a full scan at embedding
+dimensions.
+
+| | Exact (brute-force / flat) | Approximate (ANN) |
 | --- | --- | --- |
 | Work per query | Compares every vector | Compares a small fraction |
 | Result quality | Always the true top k | Usually most of the true top k |
 | Index | Not required | Built and maintained alongside the data |
 | Typical fit | Small collections, small filtered subsets | Large collections |
 
-## How do HNSW and IVF indexes work?
+ANN indexes differ in how they pick that fraction. Graph-based indexes such as HNSW
+link each vector to some of its near neighbors and walk that graph toward the query,
+while IVF (inverted file) indexes cluster the vectors and scan only the clusters
+closest to the query. [What is HNSW?](/learn/vector-search/what-is-hnsw) explains how
+these indexes are built, searched, and tuned.
 
-**HNSW** (Hierarchical Navigable Small World) is a graph-based ANN index. Each vector
-becomes a node linked to some of its near neighbors, and nodes are arranged in layers:
-upper layers are sparse and hold long-range links, while the bottom layer holds every
-vector. A search enters at the top layer, greedily moves to neighbors closer to the
-query, and descends layer by layer. A query-time parameter, often called `ef`, sets how
-many candidates the search keeps in play; a larger value explores more of the graph,
-raising both recall and latency.
-
-**IVF** (inverted file) indexes partition the collection instead. A clustering step,
-usually k-means, chooses a set of centroids, and each vector is filed under its nearest
-centroid. A query is compared with the centroids first, and only the lists belonging
-to the closest few, a number often called `nprobe`, are scanned. IVF is often paired
-with quantization, which compresses vectors to save memory at some cost in precision.
-
-## Recall, latency, and top-k
+## What do recall, latency, and top-k mean in vector search?
 
 **Recall** measures how closely an ANN search matches exact search. Recall@k is the
 fraction of the true k nearest neighbors, as found by exact search, that the ANN search
@@ -128,7 +126,7 @@ characters or the structure of the data matter:
 - **Hard constraints.** Dates, prices, ownership, and permissions are conditions to
   enforce, not similarities to score. "Tickets from last week" is a filter.
 - **Relationships.** "Documents written by people on my team" depends on who is
-  connected to whom, which an embedding does not encode.
+  connected to whom, which a text embedding of the document does not encode.
 
 Keyword search with [BM25](/learn/full-text-search/what-is-bm25) handles exact terms
 and rare tokens well, and many systems combine the two in
@@ -136,11 +134,11 @@ and rare tokens well, and many systems combine the two in
 filter that runs before or during ranking, as described in
 [filtered vector search](/learn/vector-search/filtered-vector-search).
 
-## How HelixDB does vector search
+## How does HelixDB do vector search?
 
-HelixDB is an open-source graph database with native vector search and BM25 full-text
-search. The application computes embeddings; HelixDB stores them as properties on
-nodes or edges and indexes them.
+The application computes embeddings; HelixDB stores them as properties on nodes or
+edges, and a vector index you define over that property enables approximate nearest
+neighbor search.
 
 - A vector index covers one label and one top-level property, with a fixed dimension
   and one distance metric: cosine, Euclidean, or Manhattan.
@@ -148,9 +146,9 @@ nodes or edges and indexes them.
   90% recall.
 - Search can run inside an exact candidate set defined by a graph traversal, such as
   the documents a user can read.
-- Graph traversals, vector search, and text search run in the same ACID transaction.
-  HelixDB has no built-in rank fusion, so the application combines vector and BM25
-  results.
+- Within one request, graph traversals, vector search, and text search run in the same
+  ACID transaction over a committed snapshot. HelixDB has no built-in rank fusion, so
+  the application combines vector and BM25 results.
 
 See [vector indexes](/database/helix-db/query-guides/vector-indexes) and
 [prefiltered search](/database/helix-db/query-guides/prefiltering) for working queries.
@@ -168,37 +166,44 @@ Not for small collections. Comparing a query exhaustively against a few thousand
 vectors is usually fast enough. An ANN index becomes worthwhile when exhaustive search
 no longer fits your latency budget.
 
-### Can vector search find an exact product code or ID?
+### Does vector search work for images or audio?
 
-Not reliably. Embeddings capture meaning, and identifiers carry little of it. Use an
-equality lookup or keyword search for identifiers, and combine it with vector search
-when queries mix exact terms and natural language.
+Yes, given an embedding model for that kind of data. Image and audio models produce
+vectors that are searched the same way as text vectors. Multimodal models map
+different kinds of input into one embedding space, so a text query can retrieve
+images.
 
-### What value of k should I use?
+### How do you evaluate vector search quality?
 
-It depends on what consumes the results. A search page might show ten items, while a
-RAG pipeline might retrieve a few dozen passages and rerank them down to what fits in
-the model's context.
+Beyond recall@k, build a labeled set of real queries with known good answers and score
+results with a relevance metric such as precision@k or nDCG. Relevance scores expose
+problems in the embedding model, chunking, or filters that recall cannot see.
 
 ## Related topics
 
 <CardGroup cols={2}>
+  <Card title="What are vector embeddings?" icon="cube" href="/learn/vector-search/what-are-vector-embeddings">
+    How models turn inputs into vectors, and how dimensions and chunking work.
+  </Card>
+  <Card title="What is HNSW?" icon="diagram-project" href="/learn/vector-search/what-is-hnsw">
+    How HNSW and IVF indexes find approximate nearest neighbors.
+  </Card>
   <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
     What a vector database stores and when you need one.
   </Card>
-  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
     Restrict results by metadata, permissions, or graph membership.
   </Card>
-  <Card title="Vector distance metrics" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+  <Card title="What is the difference between cosine, Euclidean, and Manhattan distance?" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
     Cosine, Euclidean, Manhattan, and dot product compared.
   </Card>
-  <Card title="Hybrid search" icon="layer-group" href="/learn/full-text-search/hybrid-search">
+  <Card title="What is hybrid search?" icon="layer-group" href="/learn/full-text-search/hybrid-search">
     Combine vector search with keyword search.
+  </Card>
+  <Card title="What is retrieval-augmented generation (RAG)?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+    Ground a language model's answers in retrieved data.
   </Card>
   <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
     Create a vector index and run nearest neighbor search in HelixDB.
-  </Card>
-  <Card title="Prefiltered search" icon="route" href="/database/helix-db/query-guides/prefiltering">
-    Rank only the nodes or edges a traversal reaches.
   </Card>
 </CardGroup>

@@ -1,7 +1,7 @@
 ---
 title: "What is AI agent memory?"
 description: "AI agent memory is the system that stores, updates, and recalls what an agent learns across sessions, outside the model's context window."
-sidebarTitle: "What is AI agent memory?"
+sidebarTitle: "AI agent memory"
 pageType: "Concept"
 ---
 
@@ -10,22 +10,32 @@ pageType: "Concept"
 AI agent memory is the infrastructure that lets an agent built on a large language model
 (LLM) keep information beyond a single model call: what a user told it, what happened in
 earlier sessions, and how it should carry out recurring tasks. Because the model itself
-is stateless, memory lives in an external store that the agent writes to after an
-interaction and reads from before the next one. A useful memory layer does more than
-save transcripts. It extracts durable facts, keeps them current, forgets what is stale
-or deleted, and recalls only the relevant, permitted subset for each request.
+is stateless, memory lives in an external store that the agent writes to as it learns
+something and reads from when it needs context, typically before generating a reply.
+
+<div className="learn-objectives">
+  <Card title="Learning objectives" icon="graduation-cap">
+    After reading this article you will be able to:
+
+    - Explain why a model's context window cannot serve as an agent's long-term memory
+    - Describe the main types of agent memory, from working memory to the user profile
+    - Outline the memory lifecycle from ingestion through forgetting and recall
+    - Identify the storage and retrieval requirements a memory layer must meet
+  </Card>
+</div>
 
 ## Why is a context window not memory?
 
-The context window is the text a model can read in one call. It works like working
-memory: everything the model knows about the current task has to be in it, and it is
-gone when the call ends. Treating it as long-term memory breaks down for several
-reasons:
+A context window is not memory because it holds only what a model processes in one call,
+and it is cleared when that call ends. The window is a maximum amount of text, measured
+in tokens; in many models the reply the model generates counts against the same limit.
+It works like working memory: everything the model knows about the current task has to
+be in it. Treating it as long-term memory breaks down for several reasons:
 
 - **It resets.** A new session starts empty unless something outside the model puts
   earlier information back.
-- **It is bounded and priced per token.** Replaying every past conversation grows cost
-  and latency with each turn, and eventually stops fitting.
+- **It is bounded and typically priced per token.** Replaying every past conversation
+  grows cost and latency with each turn, and eventually stops fitting.
 - **It has no notion of truth over time.** If a user said one thing last month and the
   opposite today, a transcript contains both, and the model has to guess which is
   current.
@@ -40,9 +50,10 @@ that decides what to keep, what changed, and what to retrieve.
 
 ## What types of memory do AI agents use?
 
-Agent memory is usually described with terms borrowed from cognitive psychology.
-Short-term memory covers what the agent is working with right now; long-term memory
-persists across sessions.
+AI agents use short-term memory (working memory and conversation history) and long-term
+memory (episodic, semantic, and procedural), often condensed into a user profile. These
+terms are borrowed from cognitive psychology. Short-term memory covers what the agent is
+working with right now; long-term memory persists across sessions.
 
 | Type | Horizon | What it holds | Example |
 | --- | --- | --- | --- |
@@ -62,12 +73,15 @@ the agent can load broad context cheaply on every request.
 
 ## How does the memory lifecycle work?
 
-A memory system is a loop. Every interaction can add, change, or remove memories, and
-every request reads from the result.
+The memory lifecycle is a loop of six steps (ingest, extract, deduplicate, update,
+forget, and recall): each interaction can add, change, or remove memories, and each
+request reads from the result.
 
 ```mermaid
 flowchart LR
-    ingest["Ingest<br/>messages, documents, events"] --> extract["Extract<br/>candidate facts"]
+    ingest["Ingest<br/>messages, documents, events"]
+    extract["Extract<br/>candidate facts"]
+    ingest --> extract
     extract --> dedupe["Deduplicate<br/>against existing memories"]
     dedupe --> update["Update or version"]
     update --> store[("Memory store")]
@@ -92,12 +106,15 @@ flowchart LR
 6. **Recall.** Retrieve the memories this user may see, that are still current, and that
    are relevant to the request, then assemble them into context.
 
-The guide to [building long-term memory](/learn/ai-memory/long-term-memory-for-ai-agents)
-walks through each step as a concrete architecture.
+The guide to
+[building long-term memory](/learn/ai-memory/long-term-memory-for-ai-agents) walks
+through each step as a concrete architecture.
 
 ## What infrastructure does a memory layer need?
 
-Each lifecycle step places a different demand on storage and retrieval.
+A memory layer needs tenant-scoped identity, relationships between records, semantic
+recall, exact recall, lifecycle filtering, and provenance. Each lifecycle step places a
+different demand on storage and retrieval:
 
 | Requirement | Why it matters | Typical mechanism |
 | --- | --- | --- |
@@ -112,68 +129,79 @@ Many teams assemble these from several systems, such as a relational store for r
 a vector store for embeddings, and a search engine for keywords. That works, but the
 application then has to keep them consistent. A memory deleted in one system can still
 surface from another, and a permission filter applied after a similarity search can
-remove every result or, if it is forgotten, leak one.
+remove every result or, if it is forgotten, leak one. See
+[one database for graph, vector, and text](/learn/database-architecture/one-database-for-graph-vector-and-text)
+for the trade-offs.
 
-## How HelixDB supports agent memory
+## How does HelixDB support agent memory?
 
 HelixDB is an open-source graph database with native vector search and BM25 full-text
 search, so the requirements above can be met in one labeled property graph:
 
 - **Properties with indexes** hold tenant scope, identity, and lifecycle fields such as
   `isLatest`, `validTo`, `deletedAt`, and `expiresAt`. Equality and range
-  [secondary indexes](/database/helix-db/query-guides/secondary-indexes) make them fast
-  filters.
+  [secondary indexes](/database/helix-db/query-guides/secondary-indexes) make them
+  indexed filters.
 - **Edges** record provenance, categories, entities, version updates, and associations.
-- **Vector search** handles deduplication and paraphrase recall, and **BM25** handles
-  exact names, IDs, and rare tokens. Both index types can be
-  [partitioned by tenant](/database/helix-cloud/operate/multi-tenancy).
+- **[Vector search](/database/helix-db/query-guides/vector-indexes)** handles
+  deduplication and paraphrase recall, and
+  **[BM25](/database/helix-db/query-guides/text-indexes)** handles exact names, IDs, and
+  rare tokens. Both index types can be
+  [partitioned by tenant](/database/helix-cloud/operate/multi-tenancy#tenant-partitioned-search-indexes).
 - **A profile node** holds stable user context that the agent loads on every request.
 
 The recall pattern is to build the visible candidate set first with a graph traversal,
 then run [prefiltered](/database/helix-db/query-guides/prefiltering) vector and BM25
 search inside it, so a memory outside the set is never returned. Each request runs as
 one ACID transaction, so the traversal and both searches read the same snapshot. The
-application computes embeddings and fuses the vector and BM25 result lists, because
-HelixDB has no built-in rank-fusion operator.
+application computes embeddings; HelixDB stores and indexes the vectors. HelixDB has no
+built-in rank fusion or reranking, so the application fuses the vector and BM25 result
+lists.
 
 ## Frequently asked questions
 
-### What is the difference between short-term and long-term memory for AI agents?
+### How does an agent decide which memories to recall?
 
-Short-term memory is what the model can see during the current task: the context window
-and the recent conversation. Long-term memory persists across sessions in an external
-store and includes episodic, semantic, and procedural memories. The agent moves
-information between them by writing extracted facts to long-term memory and recalling a
-relevant subset into the context window.
+It narrows by scope first: only memories owned by or shared with the current user or
+team. It then keeps only current memories, excluding anything deleted, superseded, or
+expired, and ranks what remains by relevance with semantic and keyword search. These
+filters should apply before or during ranking, not after, and the agent keeps only a
+small budget of top results so the context stays focused.
 
 ### Is agent memory the same as RAG?
 
-They share retrieval techniques but differ in what they retrieve. Retrieval-augmented
-generation (RAG) typically reads from a document collection that changes independently
-of the agent. Memory is written by the agent from its own interactions, changes as facts
-are corrected, and is scoped to a user or team. Many systems combine the two and link
-each memory to the source passage it came from.
+They share retrieval techniques but differ in what they retrieve.
+[Retrieval-augmented generation (RAG)](/learn/ai-memory/what-is-rag) typically reads
+from a document collection that changes independently of the agent. Memory is written by
+the agent from its own interactions, changes as facts are corrected, and is scoped to a
+user or team. Many systems combine the two and link each memory to the source passage it
+came from.
 
 ### Can a vector database alone serve as agent memory?
 
-A vector index covers semantic recall, which is one requirement out of several. On its
-own it cannot tell a current fact from a superseded one, enforce who owns a memory,
-reliably match exact identifiers, or explain where a fact came from. Those need
-properties, lifecycle filters, keyword search, and relationships alongside the vectors.
+Not on its own. A [vector database](/learn/vector-search/what-is-a-vector-database)
+covers semantic recall, and many also filter on metadata copied onto each vector, which
+can handle ownership and lifecycle flags. That copy has to be kept in sync, and it
+cannot represent provenance, versions, or links between entities as relationships; many
+vector databases also lack keyword ranking for exact identifiers. A complete memory
+layer needs properties, lifecycle filters, keyword search, and relationships alongside
+the vectors.
+
+### What should an agent store in memory?
+
+Store information that is likely to matter again: stable facts and preferences, notable
+events, and workflows the agent has learned. Skip small talk, transient details, and
+anything a user or policy says must not be kept. Each stored fact should be atomic and
+self-contained, and should record its owner, its source, and when it was learned so it
+can be superseded or expired later.
 
 ### How should an AI agent forget?
 
-Most systems prefer soft deletion: mark a memory as deleted or superseded and exclude it
-from every recall path, which keeps an audit trail and allows recovery. Time-bound facts
-get an expiry, and low-value episodes can decay based on age and use. Physical deletion
-is reserved for cases where a user request or a retention policy requires it.
-
-### Do larger context windows remove the need for memory?
-
-No. A larger window lets more text into a single call, but the model is still stateless
-between sessions, cost and latency grow with prompt size, and nothing in the window
-resolves which of two conflicting facts is current. Memory decides what to keep and what
-to retrieve; the context window is where the retrieved result goes.
+Many systems use soft deletion: mark a memory as deleted, superseded, or expired and
+exclude it from every recall path, and reserve physical deletion for user requests and
+retention policies. The guide to
+[building long-term memory](/learn/ai-memory/long-term-memory-for-ai-agents) covers
+expiry, decay, and deletion in detail.
 
 ## Related topics
 
@@ -181,19 +209,19 @@ to retrieve; the context window is where the retrieved result goes.
   <Card title="Building long-term memory" icon="brain" href="/learn/ai-memory/long-term-memory-for-ai-agents">
     Data model, write path, forgetting, and recall for agent memory.
   </Card>
+  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+    Ground a model's answers in data retrieved at query time.
+  </Card>
   <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
     Retrieval over entities and relationships, not only text chunks.
   </Card>
-  <Card title="Hybrid search" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+  <Card title="What is hybrid search?" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
     Combine vector similarity with BM25 keyword ranking.
   </Card>
-  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
     Restrict similarity search to the records a user may see.
   </Card>
-  <Card title="Prefiltered search" icon="vector-square" href="/database/helix-db/query-guides/prefiltering">
-    Rank only the nodes a traversal reaches in a HelixDB query.
-  </Card>
-  <Card title="Multi-tenancy" icon="users" href="/database/helix-cloud/operate/multi-tenancy">
-    Scope records and search indexes by tenant in Helix Cloud.
+  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+    Store embeddings and find the nearest ones to a query.
   </Card>
 </CardGroup>

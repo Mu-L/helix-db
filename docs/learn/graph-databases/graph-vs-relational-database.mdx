@@ -1,6 +1,6 @@
 ---
-title: "Graph database vs relational database"
-description: "Relational databases join tables on keys at query time; graph databases store relationships as edges. Compare the two models and when to use each."
+title: "What is the difference between a graph database and a relational database?"
+description: "A relational database rebuilds relationships with joins at query time; a graph database stores them as edges and follows them directly."
 sidebarTitle: "Graph vs relational"
 pageType: "Concept"
 ---
@@ -10,12 +10,26 @@ pageType: "Concept"
 A relational database stores data as rows in tables and rebuilds relationships at query
 time by joining tables on keys, while a graph database stores relationships directly as
 edges between nodes and answers queries by following them. Relational databases are
-typically the better choice for tabular records, aggregation, and reporting. Graph
-databases are typically the better choice when questions follow connections across many
-hops, such as friends of friends, dependency chains, or fraud rings. Many applications
+typically the better choice for tabular records, aggregation, and reporting; graph
+databases suit questions that follow connections across many hops; many applications
 use both.
 
-## How do graph and relational databases differ?
+<div className="learn-objectives">
+  <Card title="Learning objectives" icon="graduation-cap">
+    After reading this article you will be able to:
+
+    - Compare how relational and graph databases model and store relationships
+    - Explain how joins and traversals handle multi-hop and variable-depth queries
+    - Choose a graph database, a relational database, or both for a given workload
+    - Describe which relational concepts carry over to HelixDB
+  </Card>
+</div>
+
+## How do the two models compare side by side?
+
+The two models differ mainly in how relationships are stored: relational databases keep
+them as key values and rebuild them with joins, while graph databases store them as
+edges that queries follow.
 
 | | Relational database | Graph database |
 | --- | --- | --- |
@@ -27,23 +41,37 @@ use both.
 | Aggregation and reporting | A core strength, with mature optimizers and BI tooling | Supported, but usually secondary to traversal |
 | Transactions | Typically ACID | Many systems are ACID; guarantees vary by system |
 
+The graph column describes the labeled property graph model. RDF, the other common graph
+model, stores data as subject-predicate-object triples instead; see
+[Property graph vs RDF](/learn/graph-databases/property-graph-vs-rdf).
+
 The biggest practical difference is how each model handles a question whose answer is
 several relationships away.
 
-## Why are multi-hop queries different?
+## Why do multi-hop queries differ between joins and traversals?
+
+Each hop in a relational database is a join that matches keys and builds a new
+intermediate result, while each hop in a graph database follows the edges attached to
+the current nodes.
 
 In a relational database, each hop is a join: the database takes the rows it has so
 far, looks up matching keys in another table, usually through an index, and produces a
-larger intermediate result. A fixed number of hops means a fixed number of joins. An
-unknown number of hops, such as "all parts inside this assembly, however deeply
-nested," needs a recursive query that repeats the join until no new rows appear.
+new intermediate result, which grows with each hop when relationships fan out. A fixed
+number of hops means a fixed number of joins. An unknown number of hops, such as "all
+parts inside this assembly, however deeply nested," needs a recursive query that
+repeats the join until no new rows appear.
 
-In a graph database, each hop reads the edges attached to the current nodes. Many graph
-databases store those edges with each node, so the work per hop tracks the number of
-relationships actually followed. Variable-depth paths are part of the query language
-rather than a special construct.
+In a graph database, many systems store a node's edges with the node, so the work per
+hop tracks the number of relationships actually followed. Graph query languages
+typically express variable depth directly in a path pattern or traversal step, such as
+a variable-length pattern or a repeat step, instead of a recursive query the author
+must structure by hand.
 
-## Example: which products does a supplier affect?
+## What does a multi-hop query look like in SQL and in a graph?
+
+In SQL, a multi-hop query of unknown depth is a recursive common table expression that
+repeats a join; in a graph, it is a traversal that follows the same edge type
+repeatedly.
 
 Suppose a supplier cannot ship. Its parts go into sub-assemblies, which go into larger
 assemblies, which eventually go into finished products. The question is: which
@@ -52,17 +80,19 @@ advance.
 
 ### The relational version
 
-A typical relational schema uses three tables:
+A typical relational schema uses four tables:
 
 | Table | Columns |
 | --- | --- |
 | `supplier_parts` | `supplier_id`, `part_id` |
 | `part_usage` | `part_id`, `used_in_part_id` |
-| `products` | `product_id`, `name`, `part_id` |
+| `product_parts` | `product_id`, `part_id` |
+| `products` | `product_id`, `name` |
 
-Each product row points at its top-level assembly through `part_id`. The query needs a
-recursive common table expression that walks `part_usage` upward until it finds no new
-parts, then joins the result to `products`:
+A product can contain several parts or assemblies, so `product_parts` links each product
+to the parts that go directly into it. The query needs a recursive common table
+expression that walks `part_usage` upward until it finds no new parts, then joins the
+result through `product_parts` to `products`:
 
 ```sql
 WITH RECURSIVE affected(part_id) AS (
@@ -75,12 +105,14 @@ WITH RECURSIVE affected(part_id) AS (
   JOIN affected AS a ON pu.part_id = a.part_id
 )
 SELECT DISTINCT p.product_id, p.name
-FROM products AS p
-JOIN affected AS a ON p.part_id = a.part_id;
+FROM affected AS a
+JOIN product_parts AS pp ON pp.part_id = a.part_id
+JOIN products AS p ON p.product_id = pp.product_id;
 ```
 
-`UNION` removes duplicate rows, which also stops the recursion if the usage data
-contains a cycle.
+In systems that allow `UNION` in recursive queries, it removes duplicate rows, which
+also stops the recursion if the usage data contains a cycle. Systems that allow only
+`UNION ALL` typically need an explicit depth limit or cycle check instead.
 
 ### The graph version
 
@@ -110,7 +142,8 @@ and executed. The SQL version builds a working table and joins it back against
 `part_usage` on every iteration. The graph version reads each part's outgoing `USED_IN`
 edges directly. For shallow questions over well-indexed tables, the relational version
 performs well. As depth, branching, and the number of relationship types grow, the graph
-version typically stays simpler to write and its cost tracks the edges it touches.
+version typically stays simpler to write, and each hop reads stored adjacency rather
+than probing an index for every row in the working table.
 
 ## When should you use a graph database instead of a relational database?
 
@@ -118,8 +151,8 @@ A graph database is usually the better fit when:
 
 - Questions routinely span several hops or an unknown depth, such as dependency chains,
   org hierarchies, or bill-of-materials lookups.
-- Relationships carry their own data, such as when a purchase happened or how confident
-  an extracted fact is.
+- Relationship attributes, such as when a purchase happened or how confident an
+  extracted fact is, need to be filtered on at each step of a multi-hop path.
 - The kinds of relationships change often, so adding a new relationship type should not
   require a schema migration.
 - You need path questions: how two entities are connected, or the shortest route
@@ -149,7 +182,7 @@ permissions, and entities, for traversal and retrieval. The cost is keeping the 
 sync: each change must reach both stores, and reads that span them are not covered by a
 single transaction.
 
-## How HelixDB compares to a relational database
+## How does HelixDB compare to a relational database?
 
 HelixDB is a graph database, not a relational one. Its data is one labeled property
 graph of nodes and directed edges with typed properties, and queries are built with
@@ -166,8 +199,9 @@ SQL. Several relational ideas carry over:
 
 For multi-hop questions, HelixDB provides traversals over outgoing, incoming, or both
 directions, bounded repeats, and shortest path; see
-[Traversals](/database/helix-db/query-guides/traversals). Vector and BM25 search run in
-the same transaction as those traversals.
+[Traversals](/database/helix-db/query-guides/traversals). Repeats are bounded, so a
+variable-depth question like the supplier example is written with a maximum depth.
+Vector and BM25 search run in the same transaction as those traversals.
 
 ## Frequently asked questions
 
@@ -182,7 +216,8 @@ data.
 
 Yes. An edge table with source and target columns represents a graph, and recursive
 queries can traverse it. This works well for shallow or occasional traversals, and gets
-harder to write and tune as depth, branching, and relationship types grow.
+harder to write and tune as depth, branching, and relationship types grow. SQL/PGQ,
+part of the SQL standard, adds property graph pattern queries over relational tables.
 
 ### Do graph databases support ACID transactions?
 
@@ -195,11 +230,6 @@ Many graph databases use labels and typed properties without requiring a fixed s
 and some let you add constraints such as uniqueness. This flexibility helps when data
 evolves, but define constraints wherever integrity matters.
 
-### Should I move from SQL to a graph database?
-
-Usually only part of the workload. Move the relationship-heavy queries that are awkward
-as joins, and keep reporting and tabular records where SQL serves them well.
-
 ## Related topics
 
 <CardGroup cols={2}>
@@ -207,12 +237,12 @@ as joins, and keep reporting and tabular records where SQL serves them well.
     Nodes, edges, traversals, and when a graph is the right model.
   </Card>
   <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
-    Labels and properties on nodes and edges, compared with RDF.
+    Labels and typed properties on nodes and edges.
   </Card>
-  <Card title="Graph, vector, and text in one database" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+  <Card title="What is the difference between a property graph and RDF?" icon="code-compare" href="/learn/graph-databases/property-graph-vs-rdf">
+    Labeled nodes and edges compared with subject-predicate-object triples.
+  </Card>
+  <Card title="Do you need separate graph, vector, and text databases?" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
     The hidden costs of stitching separate stores together.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
-    Follow outgoing and incoming relationships in a HelixDB query.
   </Card>
 </CardGroup>

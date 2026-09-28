@@ -1,19 +1,30 @@
 ---
-title: "How to build long-term memory for AI agents"
-description: "Build agent long-term memory with a scoped, versioned data model, a write path that dedupes and forgets, and a read path that searches and expands."
+title: "How do you build long-term memory for AI agents?"
+description: "Build agent long-term memory with a scoped, versioned data model, a write path that deduplicates and forgets, and a read path that searches and expands."
 sidebarTitle: "Building long-term memory"
 pageType: "Concept"
 ---
 
 <div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
 
-To build long-term memory for an AI agent, store extracted facts as versioned records
-scoped to a user, link each one to its source, the entities it mentions, and the version
-it replaced, and index the records for both semantic and exact recall. On the write
-path, application workers extract candidate facts, compare them with existing memories,
-and decide whether each one is new, a duplicate, an update, or an extension. On the read
-path, the agent narrows to current memories the user may see, searches inside that set,
-expands through relationships, and assembles a compact context for the model.
+Long-term memory for an AI agent is the part of
+[agent memory](/learn/ai-memory/what-is-ai-agent-memory) that persists across sessions:
+a store of facts, preferences, and past events the agent can recall after a conversation
+ends. To build it, store extracted facts as versioned, user-scoped records linked to
+their sources, entities, and earlier versions, and index them for semantic and exact
+recall. Writes catch duplicates and updates; reads search only current memories the user
+may see, expand through relationships, and assemble a compact context for the model.
+
+<div className="learn-objectives">
+  <Card title="Learning objectives" icon="graduation-cap">
+    After reading this article you will be able to:
+
+    - Describe the components of an agent memory system and where each runs
+    - Design a scoped, versioned memory data model
+    - Explain how the write path deduplicates, updates, and forgets memories
+    - Describe the read path from scoping to context assembly
+  </Card>
+</div>
 
 ## What are the parts of an agent memory architecture?
 
@@ -23,74 +34,75 @@ that stores, relates, and retrieves it.
 | Component | Runs in | Responsibility |
 | --- | --- | --- |
 | Extractor | Application | Turns conversations and documents into candidate facts, usually with an LLM call |
-| Embedder | Application | Computes vectors for memories and document chunks |
+| Embedder | Application | Computes [vector embeddings](/learn/vector-search/what-are-vector-embeddings) for memories and document chunks |
 | Adjudicator | Application | Decides whether a candidate is new, a duplicate, an update, or an extension |
-| Summarizer | Application | Maintains a profile of stable facts and current focus for each user |
+| Summarizer | Application | Maintains each user's profile of stable facts and current focus |
 | Sweeper | Application | Runs scheduled expiry and decay jobs |
 | Retrieval service | Application | Runs searches, fuses and reranks results, and packs context |
 | Memory store | Database | Holds records, relationships, and property, vector, and text indexes |
 
-Keeping interpretation in the application lets you change models and prompts without
-migrating storage. Expressing scope and lifecycle rules in the queries means every
-worker gets the same answer about what is visible.
-
 ## What data model does agent memory need?
 
-The model below is generic; adapt the names to your domain.
+Agent memory needs atomic, user-scoped memory records with lifecycle fields, linked by
+edges to their owner, sources, entities, categories, and the versions they replace.
+Adapt the generic names below to your domain.
 
 ```mermaid
 flowchart LR
     user["User"] -->|OWNS| current["Memory<br/>isLatest: true"]
     user -->|OWNS| old["Memory<br/>isLatest: false"]
+    user -->|OWNS| detail["Memory<br/>added detail"]
     user -->|HAS_PROFILE| profile["Profile"]
     current -->|UPDATES| old
+    detail -->|EXTENDS| current
     current -->|MENTIONS| entity["Entity"]
     current -->|IN_CATEGORY| category["Category"]
     current -->|EXTRACTED_FROM| chunk["Chunk"]
+    current -->|DERIVED_FROM| session["Session"]
     doc["Source document"] -->|HAS_CHUNK| chunk
-    old -->|DERIVED_FROM| session["Session"]
 ```
 
-- **User** owns memories. In multi-tenant products every record also carries a tenant
-  key, and team or project memory adds a scope key beyond the user.
+- **User** owns memories; in multi-tenant products every record also has a tenant key.
 - **Memory** is one atomic fact: its text, embedding, kind (fact, preference, episode,
   or procedure), salience, confidence, and lifecycle fields such as `createdAt`,
   `isLatest`, `validFrom`, `validTo`, `expiresAt`, and `deletedAt`.
 - **Source document** and **chunk** hold raw context for citations and document search.
-- **Entity** is a person, product, place, or project that memories mention.
-- **Category** groups memories by topic.
-- **Session** records the conversation a memory came from.
 - **Profile** is the summarizer's output, loaded as always-on context.
 
-Edges carry the meaning: ownership (`OWNS`), provenance (`EXTRACTED_FROM`,
-`DERIVED_FROM`), versions (`UPDATES`, plus `EXTENDS` for enrichment), and associations
-(`MENTIONS`, `IN_CATEGORY`). Keep lifecycle timestamps separate from real-world time. A
-memory about a trip next month needs its own event date, while `validTo` only records
-when the memory stopped being current.
+Edges carry ownership, provenance, versions (`UPDATES`, plus `EXTENDS` for enrichment),
+and associations. Every memory, current or superseded, has its own provenance and
+association edges; the diagram draws them once. Here `validFrom` and `validTo` record
+when a memory was current in the store (system time, not the valid time of bitemporal
+databases). Keep real-world dates, such as a trip date, in a property like `eventAt`.
 
-## How does the write path work?
+## How does the memory write path work?
+
+The write path extracts candidate facts in context, finds similar existing memories,
+classifies each candidate as new, duplicate, update, or extension, and writes the result
+atomically.
 
 <Steps>
   <Step title="Extract with context">
-    Give the extractor the current message, the previous assistant message, a short
-    window of recent turns, related existing memories, and the current date. Short
-    answers only make sense in context, so resolve them before deciding what to store.
-    Ask for structured output: content, kind, confidence, entities, source, and scope.
+    Give the extractor the current message, recent turns including the previous
+    assistant message, related memories, and the current date, so short answers resolve
+    in context. Ask for structured output: content, kind, confidence, entities, source,
+    and scope.
   </Step>
   <Step title="Find deduplication candidates">
-    Search the user's current memories for similar facts with vector search and for
-    shared names and terms with keyword search. Check for an exact content match so
-    repeated writes are idempotent.
+    Search the user's current memories with vector search for similar facts and keyword
+    search for shared names. Check for an exact content match inside the write
+    transaction, or use a scoped content hash as an idempotency key, so retried writes
+    are idempotent.
   </Step>
   <Step title="Classify the relationship">
-    Decide what the candidate means relative to what is stored. A similarity threshold
-    alone cannot tell a restatement from a correction, so use rules or an LLM to
-    adjudicate.
+    A similarity threshold alone cannot tell a restatement from a correction, so
+    adjudicate with rules or an LLM.
   </Step>
   <Step title="Write atomically">
     Write the new memory, its ownership and provenance edges, its entity and category
     links, and any invalidation of an older version together, so recall never sees a
-    half-applied change. If a memory's text changes, re-embed it in the same write.
+    half-applied change. An update writes a new memory with its own embedding and never
+    edits an existing memory's text.
   </Step>
 </Steps>
 
@@ -109,23 +121,28 @@ Decision:        update; the new memory UPDATES the Friday memory
 | Extend | Adds detail without replacing anything | New memory with an `EXTENDS` edge to the existing one |
 | New | No related memory exists | New memory with ownership and provenance edges |
 
-## How should an agent forget?
+## How do you implement forgetting in agent memory?
 
 Forgetting is a set of explicit writes plus filters on every read, not something that
 happens on its own.
 
-- **Supersession.** An updated fact gets `isLatest` false and a `validTo` time. History
-  remains for audits and "what changed" questions.
+- **Supersession.** An updated fact gets `isLatest` false and a `validTo` time but stays
+  available for audits and "what changed" questions.
 - **Soft deletion.** Set `deletedAt` when a user removes a memory. Recall excludes it,
   and the change is reversible.
 - **Expiry.** Time-bound facts, such as "the user is traveling this week", get an
   `expiresAt` time. A sweeper hides or removes them once it passes.
 - **Decay.** A sweeper can hide episodic memories that are old, low in salience, and
   rarely recalled.
-- **Hard deletion.** When a user request or policy requires physical removal, follow
-  provenance edges to find every memory derived from the deleted source.
+- **Hard deletion.** When a user or policy requires physical removal, follow provenance
+  edges to every memory derived from the deleted source and delete its chunks too. Check
+  earlier versions through `UPDATES` edges, which can hold the same data, and regenerate
+  any profile built from removed memories.
 
-## How does the read path work?
+## How does the memory read path work?
+
+The read path filters to the user's current memories, runs vector and keyword recall
+inside that set, expands through graph edges, fuses the results, and assembles context.
 
 ```mermaid
 flowchart TD
@@ -143,82 +160,79 @@ flowchart TD
    boundary that decides visibility.
 2. **Filter lifecycle.** Keep memories where `deletedAt` is empty, `isLatest` is true,
    `validTo` is empty, and `expiresAt` is empty or in the future.
-3. **Recall inside the candidate set.** Run vector search for paraphrases and BM25
-   keyword search for names, IDs, and error codes over only the scoped, current
-   memories. Filtering after a global top-k search can leave too few eligible results,
-   and it leaks data whenever a filter is missed.
-4. **Expand.** From the top hits, follow edges to entities and other memories about them,
-   to earlier versions when history matters, and to source chunks for citations. Keep
-   traversal depth bounded.
+3. **Recall inside the candidate set.** Run vector search for paraphrases and
+   [BM25](/learn/full-text-search/what-is-bm25) keyword search for names, IDs, and error
+   codes over only the scoped, current memories. Filtering after a global top-k search
+   can return too few results or leak data; see
+   [filtered vector search](/learn/vector-search/filtered-vector-search).
+4. **Expand.** From the top hits, follow edges to entities, related memories, and source
+   chunks. Apply the same tenant, user, and lifecycle filters to every memory reached,
+   include earlier versions only when the question asks for history, and keep traversal
+   depth bounded.
 5. **Fuse and rerank.** Merge the vector and keyword lists, for example with reciprocal
-   rank fusion, then adjust by salience, recency, and relationship type.
+   rank fusion as in [hybrid search](/learn/full-text-search/hybrid-search), then adjust
+   by salience, recency, and relationship type.
 6. **Assemble context.** Include the profile, the top memories with their sources, and
-   supporting chunks, within a token budget. Leave out embeddings.
+   supporting chunks within a token budget, without embeddings.
 
-## What are common pitfalls?
+## What are common pitfalls when building agent memory?
 
-- **Vector-only memory.** Similarity search misses exact identifiers, returns a fact and
-  its correction side by side, and has no concept of ownership or recency.
-- **No tenancy scope.** Recall that is not bounded by tenant and user can return another
-  user's memories. Treating a missing user ID as "shared" is also risky, so mark shared
-  memories explicitly.
+Common pitfalls are relying on vector search alone, leaving out tenancy scope or
+provenance, and overwriting memories in place.
+
+- **Vector-only memory.** Similarity search can miss or misrank exact identifiers such
+  as IDs and error codes, can return a fact next to its correction, and has no concept
+  of ownership or recency.
+- **No tenancy scope.** Recall not bounded by tenant and user can return another user's
+  memories. Mark shared memories explicitly instead of treating a missing user ID as
+  shared.
 - **No provenance.** Without links to sources, the agent cannot cite, you cannot debug a
   wrong memory, and deleting a source document leaves its derived facts behind.
-- **Never forgetting.** Stale facts compete with current ones and context fills with
-  noise.
 - **Overwriting in place.** Editing a memory's text destroys the history needed to
-  explain a change, and an edit without re-embedding leaves the vector describing the
-  old fact.
+  explain a change and, without re-embedding, leaves the vector describing the old fact.
 
-## How HelixDB fits this architecture
+## How does HelixDB fit into this architecture?
 
-HelixDB can serve as the memory store in this design. Users, memories, source
-documents, chunks, entities, categories, sessions, and profiles are nodes in one labeled
-property graph, and ownership, provenance, versions, and mentions are directed edges.
+HelixDB can serve as the memory store in this design, holding these nodes and directed
+edges in one [labeled property graph](/database/helix-db/core-concepts/data-model).
 
 - Tenant scope, identity, and lifecycle fields are top-level properties with equality
-  and range [secondary indexes](/database/helix-db/query-guides/secondary-indexes). Only
-  top-level properties can be indexed, so keep filter fields out of nested objects.
-- A [vector index](/database/helix-db/query-guides/vector-indexes) on memory and chunk
-  embeddings serves deduplication and paraphrase recall, and a
-  [text index](/database/helix-db/query-guides/text-indexes) ranks their text with BM25
-  for exact recall. Both can be partitioned by tenant.
+  and range [secondary indexes](/database/helix-db/query-guides/secondary-indexes),
+  because nested properties cannot be indexed.
+- [Vector indexes](/database/helix-db/query-guides/vector-indexes) on the memory and
+  chunk embedding properties, one per label, serve deduplication and paraphrase recall.
+  [Text indexes](/database/helix-db/query-guides/text-indexes) on their text properties
+  rank exact names, IDs, and rare tokens with BM25. Both can be partitioned by tenant.
 - [Prefiltered search](/database/helix-db/query-guides/prefiltering) ranks only the
   candidate set a traversal builds, so scope and lifecycle rules apply before ranking
-  and nothing outside the set is returned.
-- All entries in a write batch commit or roll back together, which keeps a new version,
-  its edges, and the old version's invalidation consistent. See
+  and no search result falls outside the set. Graph expansion after the search needs
+  the same filters.
+- All entries in a write batch commit or roll back together, keeping a new version, its
+  edges, and the old version's invalidation consistent. See
   [guarantees](/database/helix-cloud/operate/guarantees).
 
-The extractor, embedder, adjudicator, summarizer, and sweepers stay in the application.
-The application computes embeddings and fuses vector and BM25 results, because HelixDB
-has no built-in rank-fusion operator.
+The application fuses vector and BM25 results, because HelixDB has no built-in rank
+fusion.
 
 ## Frequently asked questions
 
-### How do you deduplicate agent memories?
+### What happens when you change the embedding model?
 
-Treat deduplication as read-then-write. Retrieve likely matches with vector and keyword
-search over the user's current memories, check for an exact repeat, and let an
-adjudicator choose between duplicate, update, extension, and new. Similarity thresholds
-depend on the embedding model, so retune them whenever the model changes.
-
-### Should an update overwrite the old memory?
-
-Usually not. Writing a new version and marking the old one superseded keeps recall clean
-while preserving history for audits, corrections, and questions about what changed.
+Vectors from different models are not comparable, so re-embed every memory and chunk,
+embed queries with the new model, and retune deduplication thresholds, which depend on
+the model. See [vector embeddings](/learn/vector-search/what-are-vector-embeddings).
 
 ### How do you handle shared memory for teams?
 
 Add a scope key beyond the user, such as a project or workspace ID, and mark shared
-memories explicitly. Build the candidate set from the scopes the requesting user belongs
-to, so private and shared memories are combined only where access allows.
+memories explicitly. Build the candidate set from every scope the requesting user can
+access.
 
 ### Should the database run memory extraction?
 
 In most architectures, no. Extraction, embedding, and summarization depend on models and
-prompts that change often, so they run as application workers. The database stores the
-results, enforces scope in queries, and retrieves them consistently.
+prompts that change often, so they run in the application, where you can change them
+without migrating stored data.
 
 ## Related topics
 
@@ -229,16 +243,16 @@ results, enforces scope in queries, and retrieves them consistently.
   <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
     Retrieval that follows relationships between entities and sources.
   </Card>
-  <Card title="Hybrid search" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+  <Card title="What is hybrid search?" icon="code-merge" href="/learn/full-text-search/hybrid-search">
     Combine vector similarity with BM25 keyword ranking.
   </Card>
-  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
     Why search inside a candidate set instead of filtering afterward.
   </Card>
-  <Card title="Prefiltered search" icon="vector-square" href="/database/helix-db/query-guides/prefiltering">
-    Rank only the nodes a traversal reaches in a HelixDB query.
+  <Card title="What are vector embeddings?" icon="cubes" href="/learn/vector-search/what-are-vector-embeddings">
+    How models turn content into vectors, and when to re-embed.
   </Card>
-  <Card title="HelixDB data model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model">
-    Nodes, edges, typed properties, and indexes in HelixDB.
+  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
+    The keyword ranking behind exact recall of names and IDs.
   </Card>
 </CardGroup>

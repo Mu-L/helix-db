@@ -1,22 +1,33 @@
 ---
 title: "Do you need separate graph, vector, and text databases?"
 description: "Often not. One database with graph, vector, and full-text indexes over the same records avoids sync pipelines, dual writes, and consistency gaps."
-sidebarTitle: "Graph, vector, and text in one database"
+sidebarTitle: "One database or several"
 pageType: "Concept"
 ---
 
 <div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
 
-Many applications do not need separate graph, vector, and text databases. An
-application that needs relationships, semantic similarity, and keyword search can keep
-all three in one database when its vector and full-text indexes are access paths over
-the same records the graph stores. That removes the
-sync pipelines, dual writes, and consistency gaps of separate stores, and lets one
-transaction answer a question such as "find documents this user can read that match
-this query." Separate specialized systems still make sense for some workloads,
-covered below.
+Many applications do not need separate graph, vector, and text databases: one database
+can hold all three when its vector and full-text indexes are access paths over the same
+records the graph stores and are updated in the same transaction as those records. That
+removes the sync pipelines and dual writes of separate stores, and lets one transaction
+answer a question such as "find documents this user can read that match this query"
+with graph and search results from the same snapshot. Separate systems still make sense
+when search is a standalone product, when the workload is pure similarity search with
+no relationships or filters, or when another system of record cannot move.
 
-## What does a stitched-together stack look like?
+<div className="learn-objectives">
+  <Card title="Learning objectives" icon="graduation-cap">
+    After reading this article you will be able to:
+
+    - Describe a stack of separate graph, vector, and search stores
+    - Explain the costs of separate stores, from sync pipelines to permission drift
+    - Compare separate stores with one database that indexes the same records
+    - Recognize workloads where separate systems are the better choice
+  </Card>
+</div>
+
+## What does a stack of separate stores look like?
 
 A common architecture uses one system per access pattern: a primary or graph database
 for entities and relationships, a vector store for embeddings, and a search engine for
@@ -33,9 +44,12 @@ flowchart LR
     App -->|query| T
 ```
 
-Each system can be excellent at its own job. The cost is in the seams between them.
+Each system can do its own job well. The cost is in the seams between them.
 
 ## What does it cost to run separate stores?
+
+Separate stores cost the work of keeping several copies of the same data in agreement,
+plus the work of running and joining several systems:
 
 | Cost | What goes wrong |
 | --- | --- |
@@ -46,42 +60,47 @@ Each system can be excellent at its own job. The cost is in the seams between th
 | Multiple systems to operate | Each store has its own scaling, backups, upgrades, monitoring, security review, and on-call burden. |
 | Cross-system joins | Application code fetches top results from one store, then looks up relationships in another, which adds round trips and custom merge logic. |
 
-Permission drift deserves attention in retrieval-augmented generation (RAG). If the
-vector store still returns a chunk from a document the user lost access to, the model
-can quote it.
+Permission drift deserves attention in
+[retrieval-augmented generation (RAG)](/learn/ai-memory/what-is-rag). If the vector
+store still returns a chunk from a document the user lost access to, the model can
+quote it.
 
-Cross-system joins also cause a subtle ranking bug. A common workaround is to take the
-top results from the vector store, then drop the ones the graph says the user cannot
-see. If most of the top results are dropped, the user gets too few results even though
-relevant, permitted documents exist further down. See
+Cross-system joins also cause a subtle recall problem. A common workaround is to take
+the top results from the vector store, then drop the ones the graph says the user
+cannot see. If most of the top results are dropped, the user gets too few results even
+though relevant, permitted documents exist further down. See
 [filtered vector search](/learn/vector-search/filtered-vector-search).
 
 ## What changes with one transactional store?
 
-When graph data, vector indexes, and text indexes live in one database over the same
-records, several problems disappear rather than needing to be managed:
+When the database updates its vector and text indexes in the same transaction as the
+records, several problems typically go away:
 
 - **No copy to keep in sync.** The embedding and the text are properties of the record
-  itself, so there is no pipeline to lag behind.
-- **One transaction, one snapshot.** A query can traverse relationships and run
-  searches against the same committed state, so the graph neighborhood and the search
-  hits agree.
-- **Exact filtering before ranking.** Search can run inside the set of records a
-  traversal reaches, such as documents a user can read, instead of filtering a
-  truncated result list afterward.
+  itself, so there is no second copy to replicate. If the application writes the new
+  text and its recomputed embedding in the same transaction, the two cannot disagree.
+- **One transaction, one snapshot.** Graph and search results within one request come
+  from the same committed snapshot, so the graph neighborhood and the search hits
+  agree.
+- **Exact filtering before ranking.** If the database supports prefiltered search,
+  search can run inside the set of records a traversal reaches, such as documents a
+  user can read, instead of filtering a truncated result list afterward.
 - **One system to operate, secure, and back up.**
 
 The combined query also gets simpler. "Tickets from this customer's account that
 mention this error code or describe a similar problem" becomes one request: traverse
 from the customer to their tickets, then run keyword and vector search over just
-those tickets.
+those tickets. The two ranked lists still need to be combined, for example with
+[reciprocal rank fusion](/learn/full-text-search/hybrid-search), in the database if it
+supports fusion or in the application otherwise.
 
 ## When do separate systems make sense?
 
-A single database is not always the right answer. Separate systems are reasonable when:
+Separate systems make sense when a specialized need or an organizational constraint
+outweighs the cost of the seams:
 
-- **Search is its own product.** A large public search experience may need features a
-  multi-purpose database does not offer, such as faceting, highlighting, typo
+- **Search is its own product.** A large public search experience may need features
+  that many multi-purpose databases do not offer, such as faceting, highlighting, typo
   tolerance, or custom language analysis.
 - **The workload has no relationships or filters.** Pure similarity search over a very
   large embedding collection may be served well by a dedicated vector index.
@@ -90,10 +109,14 @@ A single database is not always the right answer. Separate systems are reasonabl
   search and graph copies should live.
 - **Workloads need strict isolation.** Different teams, scaling profiles, or failure
   domains can justify separate systems.
-- **The job is analytics.** Large scans and aggregations over history belong in a data
-  warehouse, not in an online graph or search store.
+- **The job is analytics.** Large scans and aggregations over history typically belong
+  in a data warehouse, not in an online graph or search store.
 
-## Questions to ask before choosing
+## How do you decide between one database and separate systems?
+
+Choose one database when your queries mix relationships with similarity or keyword
+relevance, access depends on relationships, and stale results would cause real
+problems. Otherwise, separate systems may fit. These questions help you decide:
 
 - Do your queries combine relationships with similarity or keyword relevance?
 - Does access control depend on relationships, such as teams, shares, or ownership?
@@ -101,18 +124,15 @@ A single database is not always the right answer. Separate systems are reasonabl
 - Do you need exact identifiers as well as semantic matches?
 - How many data systems can your team operate well?
 
-If your queries combine these kinds of retrieval, access depends on relationships, and
-stale results would cause real problems, one store usually saves more work than it
-costs.
+## How does HelixDB keep graph, vector, and text together?
 
-## How HelixDB keeps graph, vector, and text together
+HelixDB stores data in one labeled property graph, treats vector and text indexes as
+access paths over that graph, and runs traversals and searches in one ACID transaction
+per request:
 
-HelixDB is a graph database with native vector search and BM25 full-text search:
-
-- **Indexes are access paths over the same data.** Data lives in one labeled property
-  graph. Secondary, vector, and text indexes are optional access paths over a label
-  and a top-level property on nodes or edges, so relationships can be indexed and
-  searched too.
+- **Indexes are access paths over the same data.** Secondary, vector, and text indexes
+  are optional access paths over a label and a top-level property on nodes or edges,
+  so relationships can be indexed and searched too.
 - **One ACID transaction per request.** Each request runs over a committed snapshot
   with serializable snapshot isolation. Graph traversals, vector search, text search,
   and index lookups run in the same transaction, and all entries in a write batch
@@ -121,13 +141,16 @@ HelixDB is a graph database with native vector search and BM25 full-text search:
   traversal-defined candidate set. The order is graph traversal, exact candidate
   membership, ranking, then top k, so a result outside the candidate set is never
   returned.
+- **Freshness.** On Helix Cloud, readers see new commits after a snapshot refresh;
+  writer-only reads give read-after-write. A newly created index backfills existing
+  data asynchronously and becomes visible only after validation and atomic activation.
 - **Application-side pieces.** The application computes embeddings and fuses vector
-  and BM25 results.
+  and BM25 results. HelixDB has no built-in rank fusion or reranking.
 
 See the [introduction](/database/helix-db/start-here/introduction), the
 [data model](/database/helix-db/core-concepts/data-model),
-[Prefiltered search](/database/helix-db/query-guides/prefiltering), and
-[Guarantees](/database/helix-cloud/operate/guarantees).
+[prefiltered search](/database/helix-db/query-guides/prefiltering), and
+[guarantees](/database/helix-cloud/operate/guarantees).
 
 ## Frequently asked questions
 
@@ -142,7 +165,8 @@ the results of a traversal and whether it runs in the same transaction as graph 
 You need both kinds of retrieval if your questions depend on relationships as well as
 meaning, but not necessarily two databases. A graph database with vector and text
 indexes can hold the knowledge graph and serve similarity search over the same
-records. See [What is GraphRAG?](/learn/ai-memory/what-is-graphrag).
+records. See [What is RAG?](/learn/ai-memory/what-is-rag) and
+[What is GraphRAG?](/learn/ai-memory/what-is-graphrag).
 
 ### Does one database become a bottleneck?
 
@@ -160,14 +184,20 @@ specific need later. It means you add the seams only when a workload justifies t
 ## Related topics
 
 <CardGroup cols={2}>
-  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
-    Combining keyword and vector results with rank fusion.
+  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+    Grounding model answers in data retrieved at query time.
   </Card>
   <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
     Pre-filtering, post-filtering, and returning the right top k.
   </Card>
-  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
-    Entities, relationships, and provenance for search and LLMs.
+  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+    Combining keyword and vector results with rank fusion.
+  </Card>
+  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+    How vector stores index embeddings, and where they fall short.
+  </Card>
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, and traversals for connected data.
   </Card>
   <Card title="Databases on object storage" icon="cloud" href="/learn/database-architecture/object-storage-databases">
     Separating storage from compute, and what it means for cost.

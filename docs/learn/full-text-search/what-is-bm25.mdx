@@ -13,9 +13,20 @@ score that rewards terms that are rare across the collection, gives diminishing 
 for repeated occurrences, and adjusts for document length. It is the default relevance
 function in many full-text search engines.
 
+<div className="learn-objectives">
+  <Card title="Learning objectives" icon="graduation-cap">
+    After reading this article you will be able to:
+
+    - Explain what BM25 scores and why many search engines default to it
+    - Describe how IDF, saturation (`k1`), and length normalization (`b`) shape a score
+    - Work through a BM25 calculation and explain why the documents rank as they do
+    - Compare BM25 with TF-IDF and recognize when it fits better than vector search
+  </Card>
+</div>
+
 ## What is the BM25 formula?
 
-For a query `Q` and a document `D`, the standard Okapi BM25 score is:
+For a query `Q` and a document `D`, a widely used form of the BM25 score is:
 
 ```text
 score(D, Q) = sum over each query term q of
@@ -38,14 +49,19 @@ weight positive. The classic form omits it and can assign negative weights to te
 that appear in more than half of the documents. Variants differ in small details, but
 all share the three ideas below.
 
-## How BM25 scores a document
+## How does BM25 score a document?
+
+BM25 adds up a score for each query term the document contains. Each term's score is
+its IDF weight times a term frequency that saturates and is adjusted for document
+length. Three ideas drive the result.
 
 ### Inverse document frequency: rare terms count more
 
 IDF measures how much a term tells you. A term that appears in almost every document,
 such as "issue" in a ticket system, has an IDF near zero. A term that appears in a
-handful of documents, such as "timeout," has a high IDF. A document that matches the
-rare terms in a query ranks above one that matches only the common ones.
+handful of documents, such as "timeout," has a high IDF. All else being equal, a
+document that matches the rare terms in a query tends to rank above one that matches
+only the common ones.
 
 ### Term-frequency saturation: the k1 parameter
 
@@ -58,8 +74,9 @@ The term-frequency part of the formula rises quickly and then flattens toward
 | Term-frequency factor | 1.00 | 1.38 | 1.57 | 1.77 | 1.96 | 2.20 |
 
 A low `k1` saturates almost immediately, so the first occurrence is nearly all that
-counts. A high `k1` keeps rewarding repetition for longer. Saturation is what stops a
-document from ranking first just by repeating a keyword.
+counts. A high `k1` keeps rewarding repetition for longer. Saturation limits how much
+a document can gain by repeating a keyword: no number of repetitions can push a term's
+factor past `k1 + 1`.
 
 ### Length normalization: the b parameter
 
@@ -76,10 +93,12 @@ are conventions from the research literature and from many search engines, not
 universal rules. Change them only when you can measure the effect on a set of labeled
 queries.
 
-## A worked BM25 example
+## How do you calculate a BM25 score?
 
-Take three short documents and the query "export timeout," with `k1 = 1.2`,
-`b = 0.75`, and no stemming or stop words:
+Compute each query term's IDF, compute its term-frequency factor in each document,
+multiply the two, and sum over the query terms. For example, take three short
+documents and the query "export timeout," with `k1 = 1.2`, `b = 0.75`, and no
+stemming or stop words:
 
 ```text
 D1: "export fails with timeout"            4 terms
@@ -110,9 +129,16 @@ with the rare term "timeout." D3 mentions "export" twice, but saturation and its
 above-average length mean it barely edges out D2. And because "export" is in every
 document, it contributes little to any score.
 
-## BM25 vs TF-IDF
+## How is BM25 different from TF-IDF?
 
-BM25 grew out of the same ideas as TF-IDF and is often described as its successor.
+BM25 differs from classic TF-IDF in three main ways: term frequency saturates instead
+of growing without limit, document length normalization is explicit and tunable, and
+its IDF is a smoothed, probabilistic form. It also has two tuning parameters, `k1` and
+`b`, where classic TF-IDF usually has none.
+
+BM25 comes from the probabilistic relevance framework rather than the vector space
+model, but it uses the same two signals as TF-IDF, term frequency and inverse document
+frequency, and is often used in its place.
 
 | | Classic TF-IDF | BM25 |
 | --- | --- | --- |
@@ -121,34 +147,32 @@ BM25 grew out of the same ideas as TF-IDF and is often described as its successo
 | IDF | Usually `log(N / n)` | Smoothed, probabilistic form |
 | Tuning parameters | Usually none | `k1` and `b` |
 
-In practice BM25 tends to produce better rankings for search out of the box, which is
-why many engines use it as their default.
+In practice BM25 is often found to produce better rankings than classic TF-IDF out of
+the box, which is one reason many engines use it as their default.
 
-## BM25 vs vector search
+## When is BM25 a better fit than vector search?
 
-BM25 and [vector search](/learn/vector-search/what-is-vector-search) fail in different
-places, which is why they are often combined.
+BM25 fits best when the query contains exact terms that must match, such as names, IDs,
+error codes, and rare tokens; it needs no embedding model, and each term's contribution
+to a score is visible. [Vector search](/learn/vector-search/what-is-vector-search) is
+the reverse: it matches meaning through
+[embeddings](/learn/vector-search/what-are-vector-embeddings), so it handles paraphrases
+and synonyms but can miss exact identifiers. Because the two fail in different places,
+[hybrid search](/learn/full-text-search/hybrid-search) runs both and fuses the results.
 
-| | BM25 | Vector search |
-| --- | --- | --- |
-| Matches | The exact analyzed terms in the query | Meaning, via embeddings |
-| Strong at | Names, IDs, error codes, rare terms | Paraphrases, synonyms, vague questions |
-| Weak at | Different words for the same idea | Exact identifiers and rare tokens |
-| Needs a model | No | Yes, an embedding model |
-| Explainability | Each term's contribution is visible | Scores are harder to interpret |
-
-[Hybrid search](/learn/full-text-search/hybrid-search) runs both and fuses the results.
-
-## How HelixDB uses BM25
+## How does HelixDB use BM25?
 
 HelixDB text indexes are BM25-ranked. Each index covers a string or string-array
-property of a node or edge label, and search results come back best match first,
-ordered by BM25 score and then by ID, so ties are broken deterministically.
+property of a node or edge label and uses one of three analyzers: `standard`,
+`standard_stem_en`, or `whitespace_lowercase`. An index can optionally store term
+positions. Search results come back best match first, ordered by BM25 score and then by
+ID, so ties are broken deterministically.
 
 In [prefiltered search](/database/helix-db/query-guides/prefiltering), where BM25 ranks
 only the nodes or edges a traversal reaches, the BM25 statistics come from the full
 tenant partition rather than only from the candidates. A document's score therefore
-does not depend on how large or small the candidate set happens to be. See
+does not depend on which records are in the candidate set. HelixDB does not fuse BM25
+and vector results itself; the application combines them. See
 [Text indexes](/database/helix-db/query-guides/text-indexes) to create an index and
 run a search.
 
@@ -169,8 +193,8 @@ relevance threshold across queries.
 ### Does BM25 consider word order?
 
 No. BM25 treats a document as a bag of words. Phrase matching and proximity scoring
-need term positions stored in the index and are applied as additional features by
-engines that support them.
+typically use term positions stored in the index and are applied as additional
+features by engines that support them.
 
 ### What is BM25F?
 
@@ -184,10 +208,10 @@ title can count for more than the same match in the body.
   <Card title="What is full-text search?" icon="magnifying-glass" href="/learn/full-text-search/what-is-full-text-search">
     Inverted indexes, analyzers, and relevance ranking.
   </Card>
-  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+  <Card title="What is hybrid search?" icon="code-merge" href="/learn/full-text-search/hybrid-search">
     Combining keyword and vector results with rank fusion.
   </Card>
-  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
     Pre-filtering, post-filtering, and returning the right top k.
   </Card>
   <Card title="Prefiltered search guide" icon="align-left" href="/database/helix-db/query-guides/prefiltering">
