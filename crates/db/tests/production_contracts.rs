@@ -6929,10 +6929,12 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             false,
         ),
     ] {
-        // Production planning has no statistics, and an unscoped predicate
-        // cannot prove which label its stream reaches, so it keeps the
-        // per-row filter. Scoped to `Attribute`, the same predicate plans
-        // membership whenever an index answers one of its conjuncts.
+        // Production planning has no statistics, so the label scan behind
+        // every checked shape keeps the unknown-scan estimate, past one
+        // record batch. Membership then amortizes its set reads whether the
+        // predicate is unscoped, evaluating rows of other labels, or scoped
+        // to `Attribute`, rejecting them, whenever an index answers one of
+        // its conjuncts.
         // A nested conjunction would hide its conjuncts from the index split.
         let conjuncts = if let Predicate::And { predicates } = &unscoped {
             predicates.clone()
@@ -6950,7 +6952,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             .filter(|uid| uid.starts_with('a'))
             .collect::<Vec<_>>();
         for (predicate, expected, planned) in
-            [(unscoped, expected, false), (scoped, attributes, indexed)]
+            [(unscoped, expected, indexed), (scoped, attributes, indexed)]
         {
             let filtered = |group: &str| {
                 traversal::g()
