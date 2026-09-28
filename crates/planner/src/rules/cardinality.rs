@@ -1792,6 +1792,7 @@ fn cursor_cost(
             input, stats, storage,
         )
         .serial(storage.index_membership_filter(
+            plan.predicate.as_ref(),
             storage.bitmap_equality_lookup(storage.default_equality_index_rows),
             super::membership_label_domain_cost(plan.outside_label, &plan.label, stats, storage),
             // A count cursor proves no bound on its input and prices every

@@ -383,13 +383,24 @@ fn membership_contract_prices_what_the_runtime_reads() {
     assert!(evaluate.latency > per_row.latency);
     assert!(reject.latency > per_row.latency);
 
-    // An unbounded stream estimated within one batch does the filter's work
-    // less one record read.
-    let (_, _, per_row) = price(&filter, &unbounded, 10, &stats);
+    // An unbounded stream estimated within one batch does the work of the
+    // filter over the same predicate less one predicate-leaf evaluation.
     for membership in [&unscoped, &scoped] {
+        let logical::StreamPipelineOp::IndexMembership { plan } = membership else {
+            panic!("expected an index membership op");
+        };
+        let same_filter = logical::StreamPipelineOp::Filter {
+            predicate: plan.predicate().clone(),
+        };
+        let (_, _, per_row) = price(&same_filter, &unbounded, 10, &stats);
         let (_, _, cost) = price(membership, &unbounded, 10, &stats);
-        assert_eq!(cost.object_reads + 1, per_row.object_reads);
-        assert!(cost.latency < per_row.latency);
+        assert_eq!(cost.object_reads, per_row.object_reads);
+        assert_eq!(cost.authoritative_graph_reads, 10);
+        assert_eq!(cost.cpu_units + 1, per_row.cpu_units);
+        assert_eq!(
+            cost.latency.as_micros() + storage.cpu_predicate_eval.as_micros(),
+            per_row.latency.as_micros()
+        );
     }
 
     // Just past one batch, and for an empty stream, the set read outweighs

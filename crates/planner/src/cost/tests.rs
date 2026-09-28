@@ -410,29 +410,67 @@ fn membership_price_never_ties_the_per_row_filter() {
             ..StorageCostProfile::default()
         },
     ];
-    let key = |cost: CostVector| (cost.latency, cost.object_reads);
+    // Membership predicates with one leaf, two as a label-scoped predicate, and
+    // many. Each is priced against the per-row filter over the same predicate.
+    let kind = helix_ast::expr::Predicate::eq("kind", "B");
+    let predicates = [
+        kind.clone(),
+        helix_ast::expr::Predicate::and(vec![
+            helix_ast::expr::Predicate::eq("$label", "Attribute"),
+            kind,
+        ]),
+        helix_ast::expr::Predicate::or(
+            (0..32)
+                .map(|value| helix_ast::expr::Predicate::eq("kind", value))
+                .collect(),
+        ),
+    ];
+    // An unindexed conjunct stays a residual filter behind the membership.
+    let residual = helix_ast::expr::Predicate::contains("title", "x");
     for profile in &profiles {
         let set = profile.bitmap_equality_lookup(EstimatedRows::rows(10));
         let label = profile.bitmap_equality_lookup(EstimatedRows::rows(1_000));
-        for count in 0..=RECORD_BATCH_ROWS {
-            let rows = EstimatedRows::rows(count);
-            let filter = key(profile.stored_predicate_filter(rows));
-            for label_domain in [None, Some(label)] {
-                let unbounded = key(profile.index_membership_filter(
-                    set,
-                    label_domain,
-                    MembershipStream::MayExceedOneBatch(rows),
-                ));
-                let bounded = key(profile.index_membership_filter(
-                    set,
-                    label_domain,
-                    MembershipStream::WithinOneBatch(RecordBatchRows::at_most(count)),
-                ));
-                match count {
-                    0 => assert!(unbounded > filter, "{profile:?} rows {count}"),
-                    _ => assert!(unbounded < filter, "{profile:?} rows {count}"),
+        for predicate in &predicates {
+            let whole = helix_ast::expr::Predicate::and(vec![predicate.clone(), residual.clone()]);
+            for count in 0..=RECORD_BATCH_ROWS {
+                let rows = EstimatedRows::rows(count);
+                let filter = crate::optimizer::cost_key(profile.residual_filter(predicate, rows));
+                for label_domain in [None, Some(label)] {
+                    let unbounded = profile.index_membership_filter(
+                        predicate,
+                        set,
+                        label_domain,
+                        MembershipStream::MayExceedOneBatch(rows),
+                    );
+                    let bounded = crate::optimizer::cost_key(profile.index_membership_filter(
+                        predicate,
+                        set,
+                        label_domain,
+                        MembershipStream::WithinOneBatch(RecordBatchRows::at_most(count)),
+                    ));
+                    match count {
+                        0 => assert!(
+                            crate::optimizer::cost_key(unbounded) > filter,
+                            "{profile:?} {predicate:?} rows {count}"
+                        ),
+                        _ => assert!(
+                            crate::optimizer::cost_key(unbounded) < filter,
+                            "{profile:?} {predicate:?} rows {count}"
+                        ),
+                    }
+                    assert!(bounded > filter, "{profile:?} {predicate:?} rows {count}");
+
+                    // When the set keeps every row, the residual reads each kept
+                    // record a second time, which outweighs the membership's
+                    // credit even at a single row: the whole predicate stays
+                    // one per-row filter.
+                    assert!(
+                        crate::optimizer::cost_key(
+                            unbounded.serial(profile.residual_filter(&residual, rows))
+                        ) > crate::optimizer::cost_key(profile.residual_filter(&whole, rows)),
+                        "{profile:?} {predicate:?} rows {count}"
+                    );
                 }
-                assert!(bounded > filter, "{profile:?} rows {count}");
             }
         }
     }

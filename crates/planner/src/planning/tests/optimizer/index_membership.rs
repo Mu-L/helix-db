@@ -871,6 +871,54 @@ fn partial_conjunctions_within_one_batch_keep_the_filter() {
 }
 
 #[test]
+fn partial_conjunctions_behind_a_unique_source_keep_the_filter() {
+    // A unique source proves one row and its expansions keep that estimate.
+    // Every leaf of a predicate is priced on both sides of the choice, so at
+    // one row the residual's second record read is the only difference, and
+    // the membership's one-leaf credit never outweighs it.
+    let mut unique = ctx(membership_indexes());
+    unique.indexes.node_eq.insert(
+        ScopedPropertyKey::try_new("Group", "name").unwrap(),
+        NodeEqualityIndexMeta::try_new("group-name")
+            .unwrap()
+            .with_uniqueness(IndexUniqueness::Unique),
+    );
+    let title = Predicate::contains("title", "x");
+    for (decided, partial) in [
+        (
+            Predicate::eq("kind", "B"),
+            Predicate::and(vec![Predicate::eq("kind", "B"), title.clone()]),
+        ),
+        (
+            Predicate::and(vec![
+                Predicate::eq("$label", "Attribute"),
+                Predicate::eq("kind", "B"),
+            ]),
+            Predicate::and(vec![
+                Predicate::eq("$label", "Attribute"),
+                Predicate::eq("kind", "B"),
+                title.clone(),
+            ]),
+        ),
+    ] {
+        // Membership alone still wins by its credit, whatever its leaf count.
+        let plan = executable_traversal(
+            attributes_where(decided.clone()).values(vec!["kind"]),
+            unique.clone(),
+        );
+        assert_eq!(only_membership(&plan).predicate.predicate(), &decided);
+        assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
+
+        let plan = executable_traversal(
+            attributes_where(partial.clone()).values(vec!["kind"]),
+            unique.clone(),
+        );
+        assert!(memberships(&plan).is_empty(), "{:#?}", plan.steps());
+        assert_eq!(filter_predicates(&plan), [&partial]);
+    }
+}
+
+#[test]
 fn equality_seed_residual_stays_a_filter_under_a_count_with_membership() {
     // Count cursors price their operators at the unknown-input default, so
     // only a label-scoped predicate pays for the set read there.
@@ -923,8 +971,9 @@ fn equality_seed_residual_stays_a_filter_under_a_count_with_membership() {
 #[test]
 fn statistics_price_membership_by_what_the_runtime_reads() {
     // 300 rows past one batch pay the set reads (6,400 or 5,360 us) above the
-    // filter's 3,300 us; 5,000 rows amortize them; no statistics keeps the
-    // unbounded point-source estimate within one batch.
+    // filter's 3,300 or 3,600 us (one or two predicate leaves); 5,000 rows
+    // amortize them; no statistics keeps the unbounded point-source estimate
+    // within one batch.
     for (group_rows, chooses_membership) in [(Some(300), false), (Some(5_000), true), (None, true)]
     {
         let planner_ctx = group_rows.map_or(ctx(membership_indexes()), |rows| {
