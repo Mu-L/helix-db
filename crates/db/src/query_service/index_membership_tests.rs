@@ -421,12 +421,12 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
         .await
         .unwrap();
     }
-    let hub = |uid: &str, kind: &str| {
+    let hub = |item: &str, kind: &str| {
         traversal::g()
             .n_with_label_where(
                 "Item",
                 expr::Predicate::and(vec![
-                    expr::Predicate::eq("uid", uid),
+                    expr::Predicate::eq("uid", item),
                     expr::Predicate::eq("kind", kind),
                 ]),
             )
@@ -475,7 +475,7 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
     // `ih` reaches `a1` through `i1`, `i2`, and itself twice, and `a4`
     // through `i3` and itself twice: one record batch, so its membership
     // evaluates every row. Only `iw`'s 289 rows resolve the set.
-    for (uid, kind, expected, resolves) in [
+    for (item, kind, expected, resolves) in [
         (
             "iw",
             "hub",
@@ -490,15 +490,15 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
         ),
         ("iw", "leaf", Vec::new(), 0),
     ] {
-        let values = read_result(hub(uid, kind).values(vec!["uid"]));
-        let count = read_result(hub(uid, kind).count());
+        let values = read_result(hub(item, kind).values(vec!["uid"]));
+        let count = read_result(hub(item, kind).count());
         assert_eq!(membership_steps(&plan(&unindexed, &values, scope).await), 0);
         for db in [&indexed, &unindexed] {
             let rows = db
                 .query(query::QueryRequest::read(values.clone()))
                 .await
                 .unwrap();
-            assert_eq!(uids(&rows["result"]), expected, "{uid} {kind}");
+            assert_eq!(uids(&rows["result"]), expected, "{item} {kind}");
             let counted = db
                 .query(query::QueryRequest::read(count.clone()))
                 .await
@@ -539,8 +539,8 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
 
         let before = resolved(&indexed);
         let rows = execute(seeded).await;
-        assert_eq!(resolved(&indexed) - before, resolves, "{uid} {kind}");
-        assert_eq!(uids(&rows), expected, "{uid} {kind}");
+        assert_eq!(resolved(&indexed) - before, resolves, "{item} {kind}");
+        assert_eq!(uids(&rows), expected, "{item} {kind}");
         let counted = execute(planning::plan_read_batch(&count, &item_statistics).unwrap()).await;
         assert_eq!(counted, serde_json::json!(expected.len()));
     }
