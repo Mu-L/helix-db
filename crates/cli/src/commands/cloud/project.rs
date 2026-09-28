@@ -1,5 +1,5 @@
 use crate::cloud::model::{Named, Project};
-use crate::cloud::resolve::{Kind, Scope};
+use crate::cloud::resolve::{Kind, ResolvedProject, Scope};
 use crate::output::{self, table};
 use crate::project::ProjectContext;
 use crate::{ProjectAction, ScopeArgs};
@@ -44,9 +44,9 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
             })
         }
         ProjectAction::Get { project, workspace } => {
-            let project = scope.project(&ScopeArgs { workspace, project }).await?;
-            output::emit(&project, |project| {
-                print!("{}", details(project));
+            let resolved = scope.project(&ScopeArgs { workspace, project }).await?;
+            output::emit(&resolved.project, |_| {
+                print!("{}", details(&resolved));
                 Ok(())
             })
         }
@@ -80,12 +80,16 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
                 project.label(),
                 workspace.label()
             ));
+            let resolved = ResolvedProject {
+                project,
+                workspace_id: workspace.id.clone(),
+            };
             if link {
-                let config = write_link(&project)?;
+                let config = write_link(&resolved)?;
                 output::success(&format!("Linked {}", config.display()));
             }
-            output::emit(&project, |project| {
-                print!("{}", details(project));
+            output::emit(&resolved.project, |_| {
+                print!("{}", details(&resolved));
                 Ok(())
             })
         }
@@ -96,7 +100,10 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
         } => {
             super::ensure_confirmable(yes)?;
             let scope = scope.removing(Kind::Project);
-            let project = scope.project(&ScopeArgs { workspace, project }).await?;
+            let project = scope
+                .project(&ScopeArgs { workspace, project })
+                .await?
+                .project;
             let question = format!(
                 "Delete project {} ({})? This cannot be undone.",
                 project.label(),
@@ -130,34 +137,31 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
                 config.display(),
                 project.label()
             ));
-            output::emit(&json!({"project": project, "config": config}), |_| Ok(()))
+            output::emit(
+                &json!({"project": project.project, "config": config}),
+                |_| Ok(()),
+            )
         }
     }
 }
 
 /// Point this directory's helix.toml at `project`, returning its path. The
 /// local project name is left alone: it names local containers.
-fn write_link(project: &Project) -> Result<std::path::PathBuf> {
+fn write_link(project: &ResolvedProject) -> Result<std::path::PathBuf> {
     let mut context = ProjectContext::find_and_load(None)?;
-    context.config.project.id = Some(project.id.clone());
-    context
-        .config
-        .project
-        .workspace_id
-        .clone_from(&project.workspace_id);
+    context.config.project.id = Some(project.project.id.clone());
+    context.config.project.workspace_id = Some(project.workspace_id.clone());
     let path = context.root.join("helix.toml");
     context.config.save_to_file(&path)?;
     Ok(path)
 }
 
-fn details(project: &Project) -> String {
+fn details(resolved: &ResolvedProject) -> String {
+    let project = &resolved.project;
     table::key_values(&[
         ("Name", project.label().to_owned()),
         ("Slug", project.slug.clone().unwrap_or_default()),
         ("ID", project.id.clone()),
-        (
-            "Workspace",
-            project.workspace_id.clone().unwrap_or_default(),
-        ),
+        ("Workspace", resolved.workspace_id.clone()),
     ])
 }

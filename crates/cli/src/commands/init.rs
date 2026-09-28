@@ -1,5 +1,5 @@
 use crate::cloud::model::Named as _;
-use crate::cloud::resolve::{Link, Scope};
+use crate::cloud::resolve::{Link, ResolvedDatabase, Scope};
 use crate::config::{
     EnterpriseInstanceConfig, HelixConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
@@ -95,18 +95,17 @@ pub async fn run(
             let instance_name = name.clone();
             // A new project never inherits the link of a project it sits in.
             let scope = Scope::new(Link::default()).await?;
-            let database = scope
+            let ResolvedDatabase { database, owner } = scope
                 .database(database.as_deref(), &ScopeArgs { workspace, project })
                 .await?;
-            let owner = scope.owner(&database).await?;
             config.local.clear();
             config.project.id = Some(owner.project_id.clone());
-            config.project.workspace_id = owner.workspace_id.clone();
+            config.project.workspace_id = Some(owner.workspace_id.clone());
             config.enterprise.insert(
                 name,
                 EnterpriseInstanceConfig {
                     database: database.reference(),
-                    workspace_id: owner.workspace_id,
+                    workspace_id: Some(owner.workspace_id),
                     project_id: Some(owner.project_id),
                 },
             );

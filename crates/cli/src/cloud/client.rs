@@ -244,10 +244,13 @@ impl CloudClient {
             let mut page = self
                 .authenticated_request(Method::GET, path, &page_query, None, action)
                 .await?;
-            let page_items = page
-                .get_mut(field)
-                .map(Value::take)
-                .unwrap_or(Value::Array(Vec::new()));
+            // WFE emits empty collections as `[]`, so a missing field means
+            // a malformed response, not an empty one.
+            let Some(page_items) = page.get_mut(field).map(Value::take) else {
+                return Err(eyre!(
+                    "Failed to {action}: the response has no `{field}` list"
+                ));
+            };
             items.extend(
                 serde_json::from_value::<Vec<T>>(page_items)
                     .wrap_err_with(|| format!("decode {action} response"))?,

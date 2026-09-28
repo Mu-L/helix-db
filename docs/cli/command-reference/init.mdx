@@ -57,7 +57,7 @@ instance in non-interactive shells.
 | --- | --- | --- |
 | `-n`, `--name <NAME>` | Cloud instance name. | `production` |
 | `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database, then a picker |
-| `--project <PROJECT>` | Owning project ID, slug, or name. Not needed with a `tenant:<id>` / `cluster:<id>` database. | The workspace's only project, then a picker |
+| `--project <PROJECT>` | Owning project ID, slug, or name. Not needed with a `tenant:<id>` / `cluster:<id>` database, which must belong to it when both are given. | The workspace's only project, then a picker |
 | `--workspace <WORKSPACE>` | Workspace ID, slug, or name to find the project in. | Your only workspace, then a picker |
 
 ## Behavior

@@ -73,7 +73,7 @@ These flags work with every command.
 - stdout carries only the command's result: tables, detail views, query results, one-time tokens, or the `--json` payload. It is always safe to pipe.
 - stderr carries everything else: progress sessions, spinners, warnings, hints, and errors.
 - Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`. They never act on an "only candidate" they were not told about: the target must be named, linked in `helix.toml`, or picked in a terminal.
-- Commands whose output is a live terminal session have no JSON result and refuse `--json`: `start --foreground`, local `logs`, and `skills install` / `skills list`.
+- Commands whose output is a live terminal session have no JSON result and refuse `--json`: `chef`, `start --foreground`, local `logs`, and `skills install` / `skills list`.
 
 With `--json`, a failed command prints one JSON object on stderr and exits with status `1`, or `2`
 for invalid arguments. Only `message` is always present:
@@ -95,6 +95,14 @@ An omitted resource resolves to:
 2. the only candidate, announced on stderr (for example `Using project <name>`);
 3. an interactive picker, in a terminal and without `--json`;
 4. otherwise, an error that lists the candidates and how to pass one.
+
+A name you pass that matches more than one resource is always an error listing the matches, even in
+a terminal; pickers only fill in arguments you left out. A resource passed by ID or as
+`tenant:<id>` / `cluster:<id>` must belong to any `--project` / `--workspace` you also pass, so
+`helix database delete tenant:<id> --project <other>` fails instead of acting outside that project.
+
+`--json` output is the server's JSON, field for field. Where the human view shows a resolved owner
+(for example the workspace of a project found in a listing), `--json` does not add it.
 
 There is no global or persisted workspace or project selection. A group run without a subcommand
 lists its resources, so `helix project` is the same as `helix project list`. Lists follow API

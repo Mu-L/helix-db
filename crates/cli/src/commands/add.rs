@@ -1,5 +1,5 @@
 use crate::cloud::model::Named as _;
-use crate::cloud::resolve::{Kind, Link, Scope};
+use crate::cloud::resolve::{Kind, Link, ResolvedDatabase, Scope};
 use crate::config::{
     EnterpriseInstanceConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
@@ -70,10 +70,10 @@ pub async fn run(path: Option<String>, target: Option<AddTarget>) -> Result<()> 
                         .collect();
                     let owner = scope.project(&args).await?;
                     let (already_added, candidates): (Vec<_>, Vec<_>) = scope
-                        .databases_in(&owner)
+                        .resolved_databases_in(&owner)
                         .await?
                         .into_iter()
-                        .partition(|database| added.contains(&database.reference()));
+                        .partition(|resolved| added.contains(&resolved.database.reference()));
                     if candidates.is_empty() && !already_added.is_empty() {
                         return Err(CliError::new(format!(
                             "every database in {} is already in helix.toml",
@@ -87,7 +87,7 @@ pub async fn run(path: Option<String>, target: Option<AddTarget>) -> Result<()> 
                     scope.choose(Kind::Database, candidates)?
                 }
             };
-            let owner = scope.owner(&database).await?;
+            let ResolvedDatabase { database, owner } = database;
             let linked = project.config.project.id.as_deref();
             if linked.is_some_and(|linked| linked != owner.project_id) {
                 return Err(CliError::new(format!(
@@ -106,14 +106,16 @@ pub async fn run(path: Option<String>, target: Option<AddTarget>) -> Result<()> 
                 .project
                 .id
                 .get_or_insert_with(|| owner.project_id.clone());
-            if project.config.project.workspace_id.is_none() {
-                project.config.project.workspace_id = owner.workspace_id.clone();
-            }
+            project
+                .config
+                .project
+                .workspace_id
+                .get_or_insert_with(|| owner.workspace_id.clone());
             project.config.enterprise.insert(
                 name.clone(),
                 EnterpriseInstanceConfig {
                     database: database.reference(),
-                    workspace_id: owner.workspace_id,
+                    workspace_id: Some(owner.workspace_id),
                     project_id: Some(owner.project_id),
                 },
             );

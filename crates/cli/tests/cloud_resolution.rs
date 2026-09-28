@@ -138,7 +138,24 @@ async fn projects_resolve_by_id_slug_or_name_across_workspaces() {
             .success();
         let project: Value = serde_json::from_str(&stdout(&assert)).unwrap();
         assert_eq!(project["id"], id, "{query}");
-        assert_eq!(project["workspaceId"], workspace, "{query}");
+        // --json is verbatim: only the direct fetch returned a workspaceId.
+        assert_eq!(
+            project.get("workspaceId").is_some(),
+            query == "p-web",
+            "{query}: {project}"
+        );
+        // The human view shows the workspace the project was found in.
+        let assert = fixture
+            .command()
+            .args(["project", "get", query])
+            .assert()
+            .success();
+        let details = stdout(&assert);
+        let row = details
+            .lines()
+            .find(|line| line.starts_with("Workspace"))
+            .unwrap();
+        assert!(row.ends_with(workspace), "{query}: {details}");
     }
 
     // With --workspace, only that workspace is searched.
@@ -749,4 +766,98 @@ async fn concurrent_lookups_survive_session_refreshes() {
         .assert()
         .failure();
     assert!(stderr(&assert).contains("no project matches 'nowhere'"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scope_flags_constrain_typed_references_and_direct_lookups() {
+    let (server, fixture) = cloud().await;
+    get(
+        &server,
+        "/v1/projects/p-a",
+        json!({"id":"p-a","workspaceId":"ws-1","displayName":"A"}),
+    )
+    .await;
+    get(
+        &server,
+        "/v1/tenants/t-b",
+        json!({"id":"t-b","name":"B","projectId":"p-b","workspaceId":"ws-1"}),
+    )
+    .await;
+    get(
+        &server,
+        "/v1/clusters/c-b",
+        json!({"id":"c-b","access":"dedicated","projectId":"p-b","workspaceId":"ws-1"}),
+    )
+    .await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    for args in [
+        vec![
+            "database",
+            "delete",
+            "tenant:t-b",
+            "--project",
+            "p-a",
+            "--yes",
+        ],
+        vec!["database", "get", "tenant:t-b", "--project", "p-a"],
+        vec!["cluster", "indexes", "c-b", "--project", "p-a"],
+    ] {
+        let assert = fixture.command().args(&args).assert().failure();
+        let error = stderr(&assert);
+        assert!(error.contains("is not in project A"), "{args:?}: {error}");
+    }
+
+    // The same reference inside its own project is fine.
+    get(
+        &server,
+        "/v1/projects/p-b",
+        json!({"id":"p-b","workspaceId":"ws-1","displayName":"B"}),
+    )
+    .await;
+    fixture
+        .command()
+        .args(["database", "get", "tenant:t-b", "--project", "p-b"])
+        .assert()
+        .success();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_response_missing_its_collection_is_an_error_not_empty() {
+    let (server, fixture) = cloud().await;
+    get(&server, "/v1/tenants/t-1/query-errors", json!({})).await;
+    let dir = write_project(
+        &fixture,
+        "malformed-logs",
+        "[project]\nname = \"malformed-logs\"\n\n[enterprise.production]\ndatabase = \"tenant:t-1\"\n",
+    );
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .arg("logs")
+        .assert()
+        .failure();
+    let error = stderr(&assert);
+    assert!(error.contains("has no `errors` list"), "{error}");
+    assert!(!error.contains("No query errors"), "{error}");
+}
+
+#[test]
+fn chef_refuses_json_mode() {
+    let fixture = CliFixture::new();
+    let assert = fixture
+        .command()
+        .args(["chef", "--json"])
+        .assert()
+        .failure();
+    assert!(stdout(&assert).is_empty());
+    let error: Value = serde_json::from_str(stderr(&assert).trim()).unwrap();
+    assert!(error["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no JSON result"));
 }

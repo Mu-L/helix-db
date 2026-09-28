@@ -87,7 +87,7 @@ async fn database_and_service_credentials_are_displayed_once_and_never_stored() 
     get(
         &server,
         "/v1/tenants/tenant-1",
-        json!({"id":"tenant-1","name":"App"}),
+        json!({"id":"tenant-1","name":"App","projectId":"project-1","workspaceId":"ws-1"}),
     )
     .await;
     Mock::given(method("POST"))
@@ -217,9 +217,9 @@ async fn workspace_project_cluster_and_auth_commands_cover_crud_contracts() {
             .success(),
     );
     assert_eq!(projects[0]["id"], "project-1");
-    assert_eq!(
-        projects[0]["workspaceId"], "ws-1",
-        "filled in from the workspace"
+    assert!(
+        projects[0].get("workspaceId").is_none(),
+        "--json is verbatim; the listing omitted workspaceId"
     );
 
     Mock::given(method("POST"))
@@ -311,7 +311,7 @@ async fn workspace_project_cluster_and_auth_commands_cover_crud_contracts() {
     get(
         &server,
         "/v1/clusters/cluster-1",
-        json!({"id":"cluster-1","displayName":"Primary","access":"dedicated"}),
+        json!({"id":"cluster-1","displayName":"Primary","access":"dedicated","projectId":"project-1","workspaceId":"ws-1"}),
     )
     .await;
     let cluster = json_stdout(
@@ -390,7 +390,10 @@ async fn database_commands_cover_discovery_lifecycle_indexes_and_keys() {
     assert_eq!(databases.len(), 2, "shared clusters are not databases");
     assert_eq!(databases[0]["kind"], "dedicated");
     assert_eq!(databases[1]["kind"], "tenant");
-    assert_eq!(databases[1]["projectId"], "project-1", "owner filled in");
+    assert!(
+        databases[1].get("projectId").is_none(),
+        "--json is verbatim; the listing omitted projectId"
+    );
 
     // Without --project, the only project of the only workspace is used.
     let table = stdout(
@@ -408,13 +411,13 @@ async fn database_commands_cover_discovery_lifecycle_indexes_and_keys() {
     get(
         &server,
         "/v1/tenants/tenant-1",
-        json!({"id":"tenant-1","name":"App"}),
+        json!({"id":"tenant-1","name":"App","projectId":"project-1","workspaceId":"ws-1"}),
     )
     .await;
     get(
         &server,
         "/v1/clusters/cluster-1",
-        json!({"id":"cluster-1","displayName":"Dedicated","access":"dedicated"}),
+        json!({"id":"cluster-1","displayName":"Dedicated","access":"dedicated","projectId":"project-1","workspaceId":"ws-1"}),
     )
     .await;
     for (target, kind) in [

@@ -159,6 +159,90 @@ pub struct ProjectLink {
     pub workspace_id: Option<String>,
 }
 
+/// The project and workspace that own a resolved resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Owner {
+    pub project_id: String,
+    pub workspace_id: String,
+}
+
+/// A project and the workspace it belongs to. `project` is exactly what the
+/// server returned (and what `--json` prints); the workspace comes from the
+/// response or, when a listing omits it, from the workspace it was listed in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedProject {
+    pub project: Project,
+    pub workspace_id: String,
+}
+
+impl ResolvedProject {
+    fn found_in(project: Project, workspace_id: &str) -> Self {
+        let workspace_id = present(project.workspace_id.as_deref())
+            .unwrap_or(workspace_id)
+            .to_owned();
+        Self {
+            project,
+            workspace_id,
+        }
+    }
+
+    /// A project fetched on its own must name its workspace.
+    fn fetched(project: Project) -> Result<Self> {
+        let Some(workspace_id) = present(project.workspace_id.as_deref()).map(str::to_owned) else {
+            return Err(eyre::eyre!(
+                "the Cloud response for project {} omitted its workspace",
+                project.id
+            ));
+        };
+        Ok(Self {
+            project,
+            workspace_id,
+        })
+    }
+
+    pub fn owner(&self) -> Owner {
+        Owner {
+            project_id: self.project.id.clone(),
+            workspace_id: self.workspace_id.clone(),
+        }
+    }
+}
+
+/// A database and the project and workspace that own it; `database` is
+/// exactly what the server returned.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedDatabase {
+    pub database: Database,
+    pub owner: Owner,
+}
+
+impl Named for ResolvedProject {
+    fn id(&self) -> &str {
+        self.project.id()
+    }
+    fn slug(&self) -> &str {
+        self.project.slug()
+    }
+    fn display_name(&self) -> &str {
+        self.project.display_name()
+    }
+}
+
+impl Named for ResolvedDatabase {
+    fn argument(&self) -> String {
+        self.database.argument()
+    }
+    fn id(&self) -> &str {
+        self.database.id()
+    }
+    fn slug(&self) -> &str {
+        self.database.slug()
+    }
+    fn display_name(&self) -> &str {
+        self.database.display_name()
+    }
+}
+
 impl Link {
     /// The link of the helix.toml above the current directory. No helix.toml
     /// means no link; a broken one is an error rather than silently ignored.
@@ -281,7 +365,7 @@ impl Scope {
             (None, Some(link)) => {
                 let workspace_id = match &link.workspace_id {
                     Some(workspace_id) => workspace_id.clone(),
-                    None => owner_workspace(&self.linked_project(link).await?)?,
+                    None => self.linked_project(link).await?.workspace_id,
                 };
                 self.linked(
                     Kind::Workspace,
@@ -298,41 +382,44 @@ impl Scope {
     // Projects
     // ------------------------------------------------------------------
 
-    /// A workspace's projects, each tagged with that workspace when the
-    /// listing omits it.
+    /// A workspace's projects exactly as the server lists them.
     pub async fn projects_in(&self, workspace: &Workspace) -> Result<Vec<Project>> {
-        let projects: Vec<Project> = self
-            .client
+        self.client
             .list(
                 "/v1/projects",
                 &[("workspace_id", &workspace.id)],
                 "projects",
                 "list projects",
             )
-            .await?;
-        Ok(projects
+            .await
+    }
+
+    /// A workspace's projects, each paired with that workspace.
+    async fn resolved_projects_in(&self, workspace: &Workspace) -> Result<Vec<ResolvedProject>> {
+        Ok(self
+            .projects_in(workspace)
+            .await?
             .into_iter()
-            .map(|mut project| {
-                project
-                    .workspace_id
-                    .get_or_insert_with(|| workspace.id.clone());
-                project
-            })
+            .map(|project| ResolvedProject::found_in(project, &workspace.id))
             .collect())
     }
 
-    pub async fn project(&self, args: &ScopeArgs) -> Result<Project> {
+    pub async fn project(&self, args: &ScopeArgs) -> Result<ResolvedProject> {
         match (args.project.as_deref(), &self.link.project, &args.workspace) {
             (Some(query), _, Some(workspace)) => {
                 let workspace = self.workspace(Some(workspace)).await?;
-                self.pick(Kind::Project, query, self.projects_in(&workspace).await?)
+                self.pick(
+                    Kind::Project,
+                    query,
+                    self.resolved_projects_in(&workspace).await?,
+                )
             }
             (Some(query), _, None) => {
                 // An ID resolves directly; a slug or name is searched for in
                 // every accessible workspace, so it works outside a project.
                 let path = format!("/v1/projects/{}", urlencoding::encode(query));
                 match self.client.fetch::<Project>(&path, "get project").await {
-                    Ok(project) => Ok(project),
+                    Ok(project) => ResolvedProject::fetched(project),
                     Err(error) if is_lookup_miss(&error) => {
                         self.pick(Kind::Project, query, self.all_projects().await?)
                     }
@@ -342,22 +429,27 @@ impl Scope {
             (None, Some(link), None) => self.linked_project(link).await,
             (None, _, workspace) => {
                 let workspace = self.workspace(workspace.as_deref()).await?;
-                self.choose(Kind::Project, self.projects_in(&workspace).await?)
+                self.choose(Kind::Project, self.resolved_projects_in(&workspace).await?)
             }
         }
     }
 
-    async fn linked_project(&self, link: &ProjectLink) -> Result<Project> {
-        self.linked(
-            Kind::Project,
-            &format!("/v1/projects/{}", link.project_id),
-            &link.project_id,
-        )
-        .await
+    async fn linked_project(&self, link: &ProjectLink) -> Result<ResolvedProject> {
+        let project: Project = self
+            .linked(
+                Kind::Project,
+                &format!("/v1/projects/{}", link.project_id),
+                &link.project_id,
+            )
+            .await?;
+        match &link.workspace_id {
+            Some(workspace_id) => Ok(ResolvedProject::found_in(project, workspace_id)),
+            None => ResolvedProject::fetched(project),
+        }
     }
 
     /// Projects across every accessible workspace, fetched concurrently.
-    async fn all_projects(&self) -> Result<Vec<Project>> {
+    async fn all_projects(&self) -> Result<Vec<ResolvedProject>> {
         let mut requests = tokio::task::JoinSet::new();
         for workspace in self.workspaces().await? {
             let client = self.client.clone();
@@ -373,10 +465,7 @@ impl Scope {
                 eyre::Ok(
                     projects
                         .into_iter()
-                        .map(|mut project| {
-                            project.workspace_id = Some(workspace.id.clone());
-                            project
-                        })
+                        .map(|project| ResolvedProject::found_in(project, &workspace.id))
                         .collect::<Vec<_>>(),
                 )
             });
@@ -386,7 +475,7 @@ impl Scope {
             projects.extend(joined??);
         }
         // Completion order is arbitrary; keep candidate lists stable.
-        projects.sort_by(|a, b| (a.label(), &a.id).cmp(&(b.label(), &b.id)));
+        projects.sort_by(|a, b| (a.label(), a.id()).cmp(&(b.label(), b.id())));
         Ok(projects)
     }
 
@@ -394,27 +483,19 @@ impl Scope {
     // Clusters
     // ------------------------------------------------------------------
 
-    pub async fn clusters_in_project(&self, project: &Project) -> Result<Vec<Cluster>> {
-        let workspace_id = owner_workspace(project)?;
-        let clusters: Vec<Cluster> = self
-            .client
+    /// A project's clusters exactly as the server lists them.
+    pub async fn clusters_in_project(&self, project: &ResolvedProject) -> Result<Vec<Cluster>> {
+        self.client
             .list(
                 "/v1/clusters",
-                &[("workspace_id", &workspace_id), ("project_id", &project.id)],
+                &[
+                    ("workspace_id", &project.workspace_id),
+                    ("project_id", &project.project.id),
+                ],
                 "clusters",
                 "list project clusters",
             )
-            .await?;
-        Ok(clusters
-            .into_iter()
-            .map(|mut cluster| {
-                cluster.project_id.get_or_insert_with(|| project.id.clone());
-                cluster
-                    .workspace_id
-                    .get_or_insert_with(|| workspace_id.clone());
-                cluster
-            })
-            .collect())
+            .await
     }
 
     pub async fn clusters_in_workspace(&self, workspace: &Workspace) -> Result<Vec<Cluster>> {
@@ -444,7 +525,16 @@ impl Scope {
                 let id = query.strip_prefix("cluster:").unwrap_or(query);
                 let path = format!("/v1/clusters/{}", urlencoding::encode(id));
                 match self.client.fetch::<Cluster>(&path, "get cluster").await {
-                    Ok(cluster) => Ok(cluster),
+                    Ok(cluster) => {
+                        self.ensure_in_scope(
+                            &format!("cluster {}", cluster.label()),
+                            present(cluster.project_id.as_deref()),
+                            present(cluster.workspace_id.as_deref()),
+                            args,
+                        )
+                        .await?;
+                        Ok(cluster)
+                    }
                     Err(error) if is_lookup_miss(&error) => {
                         let project = self.project(args).await?;
                         self.pick(
@@ -471,16 +561,18 @@ impl Scope {
     // Databases
     // ------------------------------------------------------------------
 
-    /// A project's queryable databases: its dedicated clusters and tenants,
-    /// each tagged with the project and workspace when the listing omits them.
-    pub async fn databases_in(&self, project: &Project) -> Result<Vec<Database>> {
-        let workspace_id = owner_workspace(project)?;
+    /// A project's queryable databases, exactly as the server lists them:
+    /// its dedicated clusters and its tenants.
+    pub async fn databases_in(&self, project: &ResolvedProject) -> Result<Vec<Database>> {
         let clusters = self.clusters_in_project(project).await?;
         let tenants: Vec<Tenant> = self
             .client
             .list(
                 "/v1/tenants",
-                &[("workspace_id", &workspace_id), ("project_id", &project.id)],
+                &[
+                    ("workspace_id", &project.workspace_id),
+                    ("project_id", &project.project.id),
+                ],
                 "tenants",
                 "list project tenants",
             )
@@ -489,25 +581,38 @@ impl Scope {
             .into_iter()
             .filter(|cluster| cluster.access() == ClusterAccess::Dedicated)
             .map(Database::Dedicated)
-            .chain(tenants.into_iter().map(|mut tenant| {
-                tenant.project_id.get_or_insert_with(|| project.id.clone());
-                tenant
-                    .workspace_id
-                    .get_or_insert_with(|| workspace_id.clone());
-                Database::Tenant(tenant)
-            }))
+            .chain(tenants.into_iter().map(Database::Tenant))
             .collect())
     }
 
-    /// Fetch a database by its typed reference. A shared cluster is not a
-    /// database, so it is rejected.
-    pub async fn database_by_reference(&self, reference: &DatabaseReference) -> Result<Database> {
-        match reference {
-            DatabaseReference::Tenant(id) => Ok(Database::Tenant(
+    /// A project's databases, each owned by that project.
+    pub async fn resolved_databases_in(
+        &self,
+        project: &ResolvedProject,
+    ) -> Result<Vec<ResolvedDatabase>> {
+        Ok(self
+            .databases_in(project)
+            .await?
+            .into_iter()
+            .map(|database| ResolvedDatabase {
+                database,
+                owner: project.owner(),
+            })
+            .collect())
+    }
+
+    /// Fetch a database by its typed reference, with the project and
+    /// workspace that own it. A shared cluster is not a database.
+    pub async fn database_by_reference(
+        &self,
+        reference: &DatabaseReference,
+    ) -> Result<ResolvedDatabase> {
+        let database = match reference {
+            DatabaseReference::Tenant(id) => Database::Tenant(
                 self.client
                     .fetch(&format!("/v1/tenants/{id}"), "get tenant")
                     .await?,
-            )),
+            ),
             DatabaseReference::Cluster(id) => {
                 let cluster: Cluster = self
                     .client
@@ -520,19 +625,46 @@ impl Scope {
                     .with_hint("pass one of its tenants as tenant:<id> instead")
                     .into());
                 }
-                Ok(Database::Dedicated(cluster))
+                Database::Dedicated(cluster)
             }
-        }
+        };
+        let Some(project_id) = present(database.project_id()) else {
+            return Err(eyre::eyre!(
+                "the Cloud response for {reference} omitted its project"
+            ));
+        };
+        let workspace_id = match present(database.workspace_id()) {
+            Some(workspace_id) => workspace_id.to_owned(),
+            None => {
+                ResolvedProject::fetched(
+                    self.client
+                        .fetch(&format!("/v1/projects/{project_id}"), "get project")
+                        .await?,
+                )?
+                .workspace_id
+            }
+        };
+        Ok(ResolvedDatabase {
+            owner: Owner {
+                project_id: project_id.to_owned(),
+                workspace_id,
+            },
+            database,
+        })
     }
 
-    pub async fn database(&self, arg: Option<&str>, args: &ScopeArgs) -> Result<Database> {
+    pub async fn database(&self, arg: Option<&str>, args: &ScopeArgs) -> Result<ResolvedDatabase> {
         let typed = arg.and_then(|arg| arg.parse::<DatabaseReference>().ok());
         let Some(reference) = typed else {
             let unscoped = args.project.is_none() && args.workspace.is_none();
             return match (arg, self.link.databases.as_slice()) {
                 (Some(query), _) => {
                     let project = self.project(args).await?;
-                    self.pick(Kind::Database, query, self.databases_in(&project).await?)
+                    self.pick(
+                        Kind::Database,
+                        query,
+                        self.resolved_databases_in(&project).await?,
+                    )
                 }
                 (None, [only]) if unscoped => self
                     .database_by_reference(only)
@@ -549,34 +681,54 @@ impl Scope {
                 }
                 (None, _) => {
                     let project = self.project(args).await?;
-                    self.choose(Kind::Database, self.databases_in(&project).await?)
+                    self.choose(Kind::Database, self.resolved_databases_in(&project).await?)
                 }
             };
         };
-        self.database_by_reference(&reference).await
+        let resolved = self.database_by_reference(&reference).await?;
+        self.ensure_in_scope(
+            &reference.to_string(),
+            Some(&resolved.owner.project_id),
+            Some(&resolved.owner.workspace_id),
+            args,
+        )
+        .await?;
+        Ok(resolved)
     }
 
-    /// The project (and workspace) that owns `database`.
-    pub async fn owner(&self, database: &Database) -> Result<ProjectLink> {
-        let Some(project_id) = database.project_id() else {
-            return Err(eyre::eyre!(
-                "the Cloud response for {} omitted its project",
-                database.reference()
-            ));
+    /// A resource fetched directly (by typed reference or ID) must belong to
+    /// the `--project` / `--workspace` the user also passed, rather than
+    /// silently acting outside it.
+    async fn ensure_in_scope(
+        &self,
+        what: &str,
+        project_id: Option<&str>,
+        workspace_id: Option<&str>,
+        args: &ScopeArgs,
+    ) -> Result<()> {
+        if args.project.is_some() {
+            let project = self.project(args).await?;
+            if project_id != Some(project.project.id.as_str()) {
+                return Err(
+                    CliError::new(format!("{what} is not in project {}", project.label()))
+                        .with_hint("drop --project, or name a resource from that project")
+                        .into(),
+                );
+            }
+            return Ok(());
+        }
+        let Some(workspace) = args.workspace.as_deref() else {
+            return Ok(());
         };
-        let workspace_id = match database.workspace_id() {
-            Some(workspace_id) => workspace_id.to_owned(),
-            None => owner_workspace(
-                &self
-                    .client
-                    .fetch::<Project>(&format!("/v1/projects/{project_id}"), "get project")
-                    .await?,
-            )?,
-        };
-        Ok(ProjectLink {
-            project_id: project_id.to_owned(),
-            workspace_id: Some(workspace_id),
-        })
+        let workspace = self.workspace(Some(workspace)).await?;
+        if workspace_id != Some(workspace.id.as_str()) {
+            return Err(
+                CliError::new(format!("{what} is not in workspace {}", workspace.label()))
+                    .with_hint("drop --workspace, or name a resource from that workspace")
+                    .into(),
+            );
+        }
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -591,11 +743,12 @@ impl Scope {
             .map_err(|error| stale_link(kind, id, &error))
     }
 
-    /// Resolve an explicit argument among `candidates`.
+    /// Resolve an explicit argument among `candidates`. An ambiguous name is
+    /// always an error listing the matches, even on a terminal: the user
+    /// named something, so the CLI never guesses which one they meant.
     pub fn pick<T: Named>(&self, kind: Kind, query: &str, candidates: Vec<T>) -> Result<T> {
         match match_query(candidates, query) {
             Resolution::Found(found) => Ok(found),
-            Resolution::Ambiguous(matches) if self.interactive => self.prompt(kind, matches),
             Resolution::Ambiguous(matches) => Err(CliError::new(format!(
                 "'{query}' matches {} {}",
                 matches.len(),
@@ -667,14 +820,9 @@ fn is_lookup_miss(error: &eyre::Report) -> bool {
     })
 }
 
-/// A project's workspace, which every WFE project response carries.
-fn owner_workspace(project: &Project) -> Result<String> {
-    project.workspace_id.clone().ok_or_else(|| {
-        eyre::eyre!(
-            "the Cloud response for project {} omitted its workspace",
-            project.id
-        )
-    })
+/// WFE emits unset string fields as `""`; treat those as absent.
+fn present(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.is_empty())
 }
 
 fn stale_link(kind: Kind, id: &str, error: &eyre::Report) -> eyre::Report {
@@ -875,6 +1023,26 @@ mod tests {
         let error = error.downcast_ref::<CliError>().unwrap();
         assert_eq!(error.message, "no project matches 'api'");
         assert_eq!(error.candidates.len(), 2);
+    }
+
+    #[test]
+    fn ambiguous_explicit_names_error_even_on_a_terminal() {
+        let scope = offline_scope(true);
+        let candidates = vec![project("p-1", "", "Web"), project("p-2", "", "web")];
+        let error = scope.pick(Kind::Project, "web", candidates).unwrap_err();
+        let error = error.downcast_ref::<CliError>().unwrap();
+        assert_eq!(error.message, "'web' matches 2 projects");
+        assert_eq!(error.candidates.len(), 2);
+    }
+
+    #[test]
+    fn empty_strings_count_as_absent() {
+        assert_eq!(present(Some("")), None);
+        assert_eq!(present(Some("ws")), Some("ws"));
+        assert_eq!(present(None), None);
+        let listed = ResolvedProject::found_in(project("p", "", ""), "ws-list");
+        assert_eq!(listed.workspace_id, "ws-list");
+        assert!(ResolvedProject::fetched(project("p", "", "")).is_err());
     }
 
     #[test]

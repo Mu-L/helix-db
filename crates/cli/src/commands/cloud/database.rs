@@ -1,5 +1,5 @@
 use crate::cloud::model::{status_label, Database, DatabaseKey, Named, Tenant};
-use crate::cloud::resolve::{Kind, Scope};
+use crate::cloud::resolve::{Kind, ResolvedDatabase, Scope};
 use crate::config::DatabaseReference;
 use crate::errors::CliError;
 use crate::output::{self, table};
@@ -45,9 +45,9 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
             database,
             scope: args,
         } => {
-            let database = scope.database(database.as_deref(), &args).await?;
-            output::emit(&database, |database| {
-                print!("{}", details(database));
+            let resolved = scope.database(database.as_deref(), &args).await?;
+            output::emit(&resolved.database, |_| {
+                print!("{}", details(&resolved));
                 Ok(())
             })
         }
@@ -88,7 +88,7 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
                 Placement::Dedicated { cluster } => {
                     let project_scope = ScopeArgs {
                         workspace: None,
-                        project: Some(project.id.clone()),
+                        project: Some(project.project.id.clone()),
                     };
                     let cluster = scope.cluster(Some(&cluster), &project_scope).await?;
                     (cluster.id, String::new())
@@ -107,7 +107,7 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
                 .post(
                     "/v1/tenants",
                     json!({
-                        "projectId": project.id,
+                        "projectId": project.project.id,
                         "clusterId": cluster_id,
                         "name": name,
                         "slug": slug,
@@ -153,7 +153,7 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
                 .map_or(Ok(()), |reference| Err(dedicated_delete_error(&reference)))?;
             super::ensure_confirmable(yes)?;
             let scope = scope.removing(Kind::Database);
-            let database = scope.database(database.as_deref(), &args).await?;
+            let database = scope.database(database.as_deref(), &args).await?.database;
             let Database::Tenant(tenant) = &database else {
                 return Err(dedicated_delete_error(&database.reference()));
             };
@@ -183,7 +183,7 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
             database,
             scope: args,
         } => {
-            let database = scope.database(database.as_deref(), &args).await?;
+            let database = scope.database(database.as_deref(), &args).await?.database;
             let indexes = scope
                 .client()
                 .get(
@@ -219,7 +219,7 @@ async fn run_key(scope: &Scope, action: DatabaseKeyAction) -> Result<()> {
             database,
             scope: args,
         } => {
-            let database = scope.database(database.as_deref(), &args).await?;
+            let database = scope.database(database.as_deref(), &args).await?.database;
             let response = scope
                 .client()
                 .post(
@@ -243,7 +243,7 @@ async fn run_key(scope: &Scope, action: DatabaseKeyAction) -> Result<()> {
             database,
             scope: args,
         } => {
-            let database = scope.database(database.as_deref(), &args).await?;
+            let database = scope.database(database.as_deref(), &args).await?.database;
             let keys = list_keys(scope, &database).await?;
             output::emit(&keys, |keys| {
                 if keys.is_empty() {
@@ -270,7 +270,7 @@ async fn run_key(scope: &Scope, action: DatabaseKeyAction) -> Result<()> {
             scope: args,
         } => {
             super::ensure_confirmable(yes)?;
-            let database = scope.database(database.as_deref(), &args).await?;
+            let database = scope.database(database.as_deref(), &args).await?.database;
             let key = scope.pick(Kind::Key, &key, list_keys(scope, &database).await?)?;
             let question = format!(
                 "Revoke key {} ({}) on {}? Apps using it lose access immediately.",
@@ -325,7 +325,8 @@ fn dedicated_delete_error(reference: &DatabaseReference) -> eyre::Report {
     .into()
 }
 
-fn details(database: &Database) -> String {
+fn details(resolved: &ResolvedDatabase) -> String {
+    let database = &resolved.database;
     let cluster = match database {
         Database::Tenant(tenant) => tenant.cluster_id.clone().unwrap_or_default(),
         Database::Dedicated(_) => String::new(),
@@ -336,14 +337,8 @@ fn details(database: &Database) -> String {
         ("Kind", database.kind().to_owned()),
         ("Status", status_label(database.status())),
         ("Cluster", cluster),
-        (
-            "Project",
-            database.project_id().unwrap_or_default().to_owned(),
-        ),
-        (
-            "Workspace",
-            database.workspace_id().unwrap_or_default().to_owned(),
-        ),
+        ("Project", resolved.owner.project_id.clone()),
+        ("Workspace", resolved.owner.workspace_id.clone()),
     ])
 }
 

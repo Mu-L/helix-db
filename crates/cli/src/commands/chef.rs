@@ -979,6 +979,13 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
     let run_id = new_chef_run_id();
     let started_at = Instant::now();
 
+    if crate::output::OutputMode::current().is_json() {
+        return Err(crate::errors::CliError::new(
+            "`helix chef` hands the terminal to a coding agent, so it has no JSON result",
+        )
+        .with_hint("run it without --json")
+        .into());
+    }
     crate::output::intro("Helix chef");
     let options = collect_options()?;
     let has_custom_intent = has_custom_intent(options.build_intent.as_deref());
