@@ -7156,7 +7156,8 @@ These flags work with every command.
 
 - stdout carries only the command's result: tables, detail views, query results, one-time tokens, or the `--json` payload. It is always safe to pipe.
 - stderr carries everything else: progress sessions, spinners, warnings, hints, and errors.
-- Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`.
+- Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`. They never act on an "only candidate" they were not told about: the target must be named, linked in `helix.toml`, or picked in a terminal.
+- Commands whose output is a live terminal session have no JSON result and refuse `--json`: `start --foreground`, local `logs`, and `skills install` / `skills list`.
 
 With `--json`, a failed command prints one JSON object on stderr and exits with status `1`, or `2`
 for invalid arguments. Only `message` is always present:
@@ -7241,7 +7242,7 @@ Run `helix add` with no subcommand in a terminal to choose interactively.
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database, then a picker |
+| `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database not yet in `helix.toml`, then a picker |
 | `--project <PROJECT>` | Owning project ID, slug, or name. | Project linked in `helix.toml` |
 | `--workspace <WORKSPACE>` | Workspace ID, slug, or name to find the project in. | Workspace linked in `helix.toml` |
 
@@ -7252,6 +7253,7 @@ Run `helix add` with no subcommand in a terminal to choose interactively.
 - `--s3-region`, `--s3-endpoint-url`, and `--s3-allow-http` require `--storage-uri`.
 - `add cloud` uses the WorkOS session and resolves the database as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
 - `add cloud` writes only stable IDs to `helix.toml`, and sets `[project] id` and `workspace_id` when they are missing.
+- Without `--database`, `add cloud` only offers databases that are not in `helix.toml` yet, and says so when every database is already added. Pass `--database` to add one again under another name.
 - `add cloud` refuses a database from a different project than the one `helix.toml` is linked to. Relink with [`helix project link`](/cli/command-reference/project) first.
 - A `cluster:<id>` target must be a dedicated cluster; shared clusters are not database targets.
 
@@ -7614,7 +7616,7 @@ Every subcommand also accepts `--workspace` and `--project`.
 - Creating a database creates a default read-write application key and prints its raw token once on stdout. With `--json`, the full create response, including the token, is printed instead. The session-authenticated CLI never stores or uses the key.
 - Additional key creation is explicit, and each new raw token is also printed once. `key create` prints only the token on stdout, so you can capture it in a script.
 - Application keys are for software that calls the gateway (the Cloud database endpoint your application connects to) directly.
-- `delete` and `key revoke` ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `--yes`.
+- `delete` and `key revoke` ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `--yes`. `delete` removes the named or linked database only; it never picks a project's only database on its own.
 - `delete` removes tenant databases only. Dedicated-cluster create/delete lifecycle is not supported by this CLI.
 
 ## Examples
@@ -8012,7 +8014,7 @@ helix project link [PROJECT] [--workspace <workspace>]
 - Arguments and defaults resolve as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution). A project slug or name without `--workspace` is searched for in every workspace you can access.
 - `list` marks the project linked in `helix.toml`.
 - `link` writes `[project] id` and `workspace_id` to the current project's `helix.toml`. It keeps the local `[project] name`, which names local containers, and creates no global selection state. It ignores an existing link, so it can relink a directory.
-- `delete` asks for confirmation in a terminal. Without one, or with `--json`, it fails before any request unless you pass `--yes`. With `--json` it prints `{"deleted":{"kind":"project","id":"..."}}`.
+- `delete` asks for confirmation in a terminal. Without one, or with `--json`, it fails before any request unless you pass `--yes`. It deletes the named or linked project only; it never picks a workspace's only project on its own. With `--json` it prints `{"deleted":{"kind":"project","id":"..."}}`.
 - `project update` is not supported.
 
 ## Examples
@@ -8084,6 +8086,7 @@ object-store data.
   ```
 
 - If nothing was found to prune for an instance, the CLI prints `No local runtime resources found for <instance>` and exits successfully.
+- With `--json`, prints one object for the whole run: `{"pruned":[{"instance":"dev","removed":true}]}`.
 
 ## Examples
 
@@ -8305,6 +8308,7 @@ helix skills <SUBCOMMAND> [--project]
 
 - Skills are installed with the [`skills`](https://github.com/vercel-labs/skills) CLI under the hood (`npx skills add HelixDB/skills`), so this command requires **Node.js/npm** (`npx`) on your PATH.
 - Skills install **globally** by default (`~/.agents/skills`, shared across projects); `--project` works relative to the current directory.
+- `install` and `list` hand the terminal to the `skills` CLI, so they refuse `--json`. `update --json` prints `{"updated":true}`.
 
 `helix skills update` re-fetches the skills from source and **overwrites** their files,
 so any local edits to the installed skills are discarded.
@@ -8375,7 +8379,7 @@ helix start [INSTANCE] [OPTIONS]
 | `--image-version <VERSION>` | Override the image tag, or `sha256:<64 lowercase hex digits>`, for this run. | Configured tag |
 | `--pull <POLICY>` | `always`, `missing`, or `never`. Explicit policies also apply to the disk-mode SeaweedFS image. | Configured policy, otherwise `always` for `latest` and `missing` for other versions |
 | `--persist` | Write the resolved port, storage, image, and pull settings for this run back to `[local.<instance>]` in `helix.toml`, so future runs reuse them. | Off |
-| `--json` | Print `instance`, `url`, and `container` as JSON on stdout once ready, and never prompt. | Off |
+| `--json` | Print `instance`, `url`, and `container` as JSON on stdout once ready, and never prompt. Not allowed with `--foreground`. | Off |
 
 ## Behavior
 
@@ -8713,6 +8717,7 @@ helix update [OPTIONS]
 - If the [Helix agent skills](/cli/command-reference/skills) are installed, `helix update` also refreshes them to the latest version, even when the CLI is already up to date. A failure here degrades to a warning and never fails the CLI update.
 - Separately, when skills are installed the CLI checks once every 24 hours whether they are out of date and prints a notice pointing you at `helix skills update`.
 - Set `HELIX_NO_UPDATE_CHECK=1` to opt out of both the CLI and skills checks. `HELIX_DISABLE_UPDATE_CHECK` works the same way.
+- With `--json`, prints `{"version":"<version>","updated":true|false}`.
 
 ## Examples
 

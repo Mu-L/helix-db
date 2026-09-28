@@ -1,5 +1,9 @@
-use std::{io, sync::LazyLock};
+use std::{
+    io::{self, IsTerminal as _},
+    sync::LazyLock,
+};
 
+use crate::errors::CliError;
 use crate::output::{self, table};
 use crate::{
     metrics_sender::{load_metrics_config, save_metrics_config, MetricsLevel},
@@ -94,6 +98,15 @@ fn is_valid_email(email: &str) -> bool {
 /// Prompt for an email on a terminal; read one line from piped stdin otherwise.
 fn ask_for_email() -> Result<String> {
     if !prompts::is_interactive() {
+        // Under --json nothing can prompt, so a terminal on stdin would wait
+        // silently; only piped input is read.
+        if io::stdin().is_terminal() {
+            return Err(CliError::new("`helix metrics full` needs an email address")
+                .with_hint(
+                    "pipe it on stdin, e.g. `echo you@example.com | helix metrics full --json`",
+                )
+                .into());
+        }
         return read_email_from(&mut io::stdin().lock());
     }
     let email: String = cliclack::input("Email address")

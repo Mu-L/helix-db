@@ -30,8 +30,8 @@ pub async fn run(action: Option<ClusterAction>) -> Result<()> {
                 for cluster in clusters {
                     rows.row([
                         cluster.label().to_owned(),
-                        cluster.access.label().to_owned(),
-                        table::state(&status_label(&cluster.status)),
+                        cluster.access().label().to_owned(),
+                        table::state(&status_label(cluster.status.as_deref())),
                         cluster.id.clone(),
                     ]);
                 }
@@ -75,11 +75,14 @@ pub async fn run(action: Option<ClusterAction>) -> Result<()> {
 fn details(cluster: &Cluster) -> String {
     table::key_values(&[
         ("Name", cluster.label().to_owned()),
-        ("Slug", cluster.slug.clone()),
+        ("Slug", cluster.slug.clone().unwrap_or_default()),
         ("ID", cluster.id.clone()),
-        ("Access", cluster.access.label().to_owned()),
-        ("Status", status_label(&cluster.status)),
-        ("Project", cluster.project_id.clone()),
-        ("Workspace", cluster.workspace_id.clone()),
+        ("Access", cluster.access().label().to_owned()),
+        ("Status", status_label(cluster.status.as_deref())),
+        ("Project", cluster.project_id.clone().unwrap_or_default()),
+        (
+            "Workspace",
+            cluster.workspace_id.clone().unwrap_or_default(),
+        ),
     ])
 }

@@ -58,18 +58,11 @@ pub async fn run(instance: Option<String>) -> Result<()> {
             .collect(),
     };
     let runtime = LocalRuntime::new(&project);
-    let needs_cloud = names
-        .iter()
-        .any(|name| project.config.enterprise.contains_key(name));
-    let client = if needs_cloud {
-        Some(
-            require_auth()
-                .await
-                .map_err(|error| CliError::from_report(&error).message),
-        )
-    } else {
-        None
-    };
+    // Reading the local session costs nothing, so load it unconditionally;
+    // it is only consulted for Cloud instances.
+    let cloud = require_auth()
+        .await
+        .map_err(|error| CliError::from_report(&error).message);
 
     let mut instances = Vec::with_capacity(names.len());
     for name in names {
@@ -82,21 +75,16 @@ pub async fn run(instance: Option<String>) -> Result<()> {
                 storage: config.storage.as_str().to_owned(),
                 name,
             },
-            InstanceInfo::Enterprise(config) => {
-                let client = client
-                    .as_ref()
-                    .expect("a client is loaded for Cloud instances");
-                match client {
-                    Ok(client) => cloud_status(client, name, &config.database).await,
-                    Err(message) => InstanceStatus::Cloud {
-                        name,
-                        state: "unknown".to_owned(),
-                        database: config.database.to_string(),
-                        label: None,
-                        error: Some(message.clone()),
-                    },
-                }
-            }
+            InstanceInfo::Enterprise(config) => match &cloud {
+                Ok(client) => cloud_status(client, name, &config.database).await,
+                Err(message) => InstanceStatus::Cloud {
+                    name,
+                    state: "unknown".to_owned(),
+                    database: config.database.to_string(),
+                    label: None,
+                    error: Some(message.clone()),
+                },
+            },
         });
     }
 
@@ -170,7 +158,12 @@ async fn cloud_status(
         DatabaseReference::Tenant(id) => client
             .fetch::<Tenant>(&format!("/v1/tenants/{id}"), "get Cloud tenant status")
             .await
-            .map(|tenant| (tenant.label().to_owned(), status_label(&tenant.status))),
+            .map(|tenant| {
+                (
+                    tenant.label().to_owned(),
+                    status_label(tenant.status.as_deref()),
+                )
+            }),
         DatabaseReference::Cluster(id) => {
             let cluster = client
                 .fetch::<Cluster>(&format!("/v1/clusters/{id}"), "get Cloud cluster status")
@@ -186,7 +179,7 @@ async fn cloud_status(
                         let state = ["phase", "status", "state"]
                             .into_iter()
                             .find_map(|field| topology.get(field).and_then(Value::as_str))
-                            .unwrap_or(&cluster.status);
+                            .or(cluster.status.as_deref());
                         (cluster.label().to_owned(), status_label(state))
                     }),
                 Err(error) => Err(error),

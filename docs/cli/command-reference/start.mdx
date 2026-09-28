@@ -39,7 +39,7 @@ helix start [INSTANCE] [OPTIONS]
 | `--image-version <VERSION>` | Override the image tag, or `sha256:<64 lowercase hex digits>`, for this run. | Configured tag |
 | `--pull <POLICY>` | `always`, `missing`, or `never`. Explicit policies also apply to the disk-mode SeaweedFS image. | Configured policy, otherwise `always` for `latest` and `missing` for other versions |
 | `--persist` | Write the resolved port, storage, image, and pull settings for this run back to `[local.<instance>]` in `helix.toml`, so future runs reuse them. | Off |
-| `--json` | Print `instance`, `url`, and `container` as JSON on stdout once ready, and never prompt. | Off |
+| `--json` | Print `instance`, `url`, and `container` as JSON on stdout once ready, and never prompt. Not allowed with `--foreground`. | Off |
 
 ## Behavior
 

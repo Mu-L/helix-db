@@ -50,7 +50,7 @@ Run `helix add` with no subcommand in a terminal to choose interactively.
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database, then a picker |
+| `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database not yet in `helix.toml`, then a picker |
 | `--project <PROJECT>` | Owning project ID, slug, or name. | Project linked in `helix.toml` |
 | `--workspace <WORKSPACE>` | Workspace ID, slug, or name to find the project in. | Workspace linked in `helix.toml` |
 
@@ -61,6 +61,7 @@ Run `helix add` with no subcommand in a terminal to choose interactively.
 - `--s3-region`, `--s3-endpoint-url`, and `--s3-allow-http` require `--storage-uri`.
 - `add cloud` uses the WorkOS session and resolves the database as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
 - `add cloud` writes only stable IDs to `helix.toml`, and sets `[project] id` and `workspace_id` when they are missing.
+- Without `--database`, `add cloud` only offers databases that are not in `helix.toml` yet, and says so when every database is already added. Pass `--database` to add one again under another name.
 - `add cloud` refuses a database from a different project than the one `helix.toml` is linked to. Relink with [`helix project link`](/cli/command-reference/project) first.
 - A `cluster:<id>` target must be a dedicated cluster; shared clusters are not database targets.
 

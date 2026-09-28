@@ -38,6 +38,17 @@ fn confirm(yes: bool, question: &str) -> Result<bool> {
     prompts::confirm(question)
 }
 
+/// The one-time token in a create response. It is shown once and never
+/// stored.
+fn one_time_token(response: &serde_json::Value, what: &str) -> Result<String> {
+    response
+        .get("token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| eyre::eyre!("the {what} response omitted its one-time token"))
+}
+
 /// Derive a URL-safe slug from a display name.
 ///
 /// ```text
@@ -93,6 +104,14 @@ mod tests {
             error.downcast_ref::<CliError>().unwrap().hint.as_deref(),
             Some("re-run with --yes to confirm")
         );
+    }
+
+    #[test]
+    fn tokens_must_be_present_and_non_empty() {
+        use serde_json::json;
+        assert_eq!(one_time_token(&json!({"token": "s"}), "key").unwrap(), "s");
+        assert!(one_time_token(&json!({"token": ""}), "key").is_err());
+        assert!(one_time_token(&json!({}), "key").is_err());
     }
 
     #[test]

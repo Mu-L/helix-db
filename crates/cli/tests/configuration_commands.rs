@@ -321,7 +321,7 @@ async fn workspace_project_cluster_and_auth_commands_cover_crud_contracts() {
             .assert()
             .success(),
     );
-    assert_eq!(cluster["access"], "CLUSTER_ACCESS_DEDICATED");
+    assert_eq!(cluster["access"], "dedicated", "passed through verbatim");
 
     get(
         &server,

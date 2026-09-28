@@ -72,7 +72,8 @@ These flags work with every command.
 
 - stdout carries only the command's result: tables, detail views, query results, one-time tokens, or the `--json` payload. It is always safe to pipe.
 - stderr carries everything else: progress sessions, spinners, warnings, hints, and errors.
-- Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`.
+- Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`. They never act on an "only candidate" they were not told about: the target must be named, linked in `helix.toml`, or picked in a terminal.
+- Commands whose output is a live terminal session have no JSON result and refuse `--json`: `start --foreground`, local `logs`, and `skills install` / `skills list`.
 
 With `--json`, a failed command prints one JSON object on stderr and exits with status `1`, or `2`
 for invalid arguments. Only `message` is always present:

@@ -10,12 +10,13 @@
 //! 5. otherwise an error listing the candidates and how to pass one.
 
 use super::model::{Cluster, ClusterAccess, Database, Named, Project, Tenant, Workspace};
-use super::CloudClient;
+use super::{CloudClient, HttpError};
 use crate::config::{DatabaseReference, HelixConfig};
 use crate::errors::{Candidate, CliError, ProjectError};
 use crate::project::ProjectContext;
 use crate::{output, prompts, ScopeArgs};
 use eyre::Result;
+use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeSet;
 
@@ -214,6 +215,9 @@ pub struct Scope {
     client: CloudClient,
     link: Link,
     interactive: bool,
+    /// The kind a destructive command acts on. Its only candidate is never
+    /// taken silently: it must be named, linked, or picked on a terminal.
+    removing: Option<Kind>,
 }
 
 impl Scope {
@@ -228,6 +232,7 @@ impl Scope {
             client: crate::commands::auth::require_auth().await?,
             link,
             interactive: prompts::is_interactive(),
+            removing: None,
         })
     }
 
@@ -236,6 +241,14 @@ impl Scope {
     pub fn unlinked(self) -> Self {
         Self {
             link: Link::default(),
+            ..self
+        }
+    }
+
+    /// The same scope for a command that deletes or revokes a `kind`.
+    pub fn removing(self, kind: Kind) -> Self {
+        Self {
+            removing: Some(kind),
             ..self
         }
     }
@@ -268,7 +281,7 @@ impl Scope {
             (None, Some(link)) => {
                 let workspace_id = match &link.workspace_id {
                     Some(workspace_id) => workspace_id.clone(),
-                    None => self.linked_project(link).await?.workspace_id,
+                    None => owner_workspace(&self.linked_project(link).await?)?,
                 };
                 self.linked(
                     Kind::Workspace,
@@ -285,6 +298,8 @@ impl Scope {
     // Projects
     // ------------------------------------------------------------------
 
+    /// A workspace's projects, each tagged with that workspace when the
+    /// listing omits it.
     pub async fn projects_in(&self, workspace: &Workspace) -> Result<Vec<Project>> {
         let projects: Vec<Project> = self
             .client
@@ -298,9 +313,9 @@ impl Scope {
         Ok(projects
             .into_iter()
             .map(|mut project| {
-                if project.workspace_id.is_empty() {
-                    project.workspace_id = workspace.id.clone();
-                }
+                project
+                    .workspace_id
+                    .get_or_insert_with(|| workspace.id.clone());
                 project
             })
             .collect())
@@ -318,7 +333,10 @@ impl Scope {
                 let path = format!("/v1/projects/{}", urlencoding::encode(query));
                 match self.client.fetch::<Project>(&path, "get project").await {
                     Ok(project) => Ok(project),
-                    Err(_) => self.pick(Kind::Project, query, self.all_projects().await?),
+                    Err(error) if is_lookup_miss(&error) => {
+                        self.pick(Kind::Project, query, self.all_projects().await?)
+                    }
+                    Err(error) => Err(error),
                 }
             }
             (None, Some(link), None) => self.linked_project(link).await,
@@ -356,7 +374,7 @@ impl Scope {
                     projects
                         .into_iter()
                         .map(|mut project| {
-                            project.workspace_id = workspace.id.clone();
+                            project.workspace_id = Some(workspace.id.clone());
                             project
                         })
                         .collect::<Vec<_>>(),
@@ -377,17 +395,26 @@ impl Scope {
     // ------------------------------------------------------------------
 
     pub async fn clusters_in_project(&self, project: &Project) -> Result<Vec<Cluster>> {
-        self.client
+        let workspace_id = owner_workspace(project)?;
+        let clusters: Vec<Cluster> = self
+            .client
             .list(
                 "/v1/clusters",
-                &[
-                    ("workspace_id", &project.workspace_id),
-                    ("project_id", &project.id),
-                ],
+                &[("workspace_id", &workspace_id), ("project_id", &project.id)],
                 "clusters",
                 "list project clusters",
             )
-            .await
+            .await?;
+        Ok(clusters
+            .into_iter()
+            .map(|mut cluster| {
+                cluster.project_id.get_or_insert_with(|| project.id.clone());
+                cluster
+                    .workspace_id
+                    .get_or_insert_with(|| workspace_id.clone());
+                cluster
+            })
+            .collect())
     }
 
     pub async fn clusters_in_workspace(&self, workspace: &Workspace) -> Result<Vec<Cluster>> {
@@ -418,7 +445,7 @@ impl Scope {
                 let path = format!("/v1/clusters/{}", urlencoding::encode(id));
                 match self.client.fetch::<Cluster>(&path, "get cluster").await {
                     Ok(cluster) => Ok(cluster),
-                    Err(_) => {
+                    Err(error) if is_lookup_miss(&error) => {
                         let project = self.project(args).await?;
                         self.pick(
                             Kind::Cluster,
@@ -426,6 +453,7 @@ impl Scope {
                             self.clusters_in_project(&project).await?,
                         )
                     }
+                    Err(error) => Err(error),
                 }
             }
             (None, [only]) if unscoped => {
@@ -443,38 +471,29 @@ impl Scope {
     // Databases
     // ------------------------------------------------------------------
 
-    /// A project's queryable databases: its dedicated clusters and tenants.
+    /// A project's queryable databases: its dedicated clusters and tenants,
+    /// each tagged with the project and workspace when the listing omits them.
     pub async fn databases_in(&self, project: &Project) -> Result<Vec<Database>> {
+        let workspace_id = owner_workspace(project)?;
         let clusters = self.clusters_in_project(project).await?;
         let tenants: Vec<Tenant> = self
             .client
             .list(
                 "/v1/tenants",
-                &[
-                    ("workspace_id", &project.workspace_id),
-                    ("project_id", &project.id),
-                ],
+                &[("workspace_id", &workspace_id), ("project_id", &project.id)],
                 "tenants",
                 "list project tenants",
             )
             .await?;
-        let owned = |project_id: &mut String, workspace_id: &mut String| {
-            if project_id.is_empty() {
-                project_id.clone_from(&project.id);
-            }
-            if workspace_id.is_empty() {
-                workspace_id.clone_from(&project.workspace_id);
-            }
-        };
         Ok(clusters
             .into_iter()
-            .filter(|cluster| cluster.access == ClusterAccess::Dedicated)
-            .map(|mut cluster| {
-                owned(&mut cluster.project_id, &mut cluster.workspace_id);
-                Database::Dedicated(cluster)
-            })
+            .filter(|cluster| cluster.access() == ClusterAccess::Dedicated)
+            .map(Database::Dedicated)
             .chain(tenants.into_iter().map(|mut tenant| {
-                owned(&mut tenant.project_id, &mut tenant.workspace_id);
+                tenant.project_id.get_or_insert_with(|| project.id.clone());
+                tenant
+                    .workspace_id
+                    .get_or_insert_with(|| workspace_id.clone());
                 Database::Tenant(tenant)
             }))
             .collect())
@@ -494,7 +513,7 @@ impl Scope {
                     .client
                     .fetch(&format!("/v1/clusters/{id}"), "get cluster")
                     .await?;
-                if cluster.access != ClusterAccess::Dedicated {
+                if cluster.access() != ClusterAccess::Dedicated {
                     return Err(CliError::new(format!(
                         "cluster {id} is shared, so it is not a database"
                     ))
@@ -539,25 +558,24 @@ impl Scope {
 
     /// The project (and workspace) that owns `database`.
     pub async fn owner(&self, database: &Database) -> Result<ProjectLink> {
-        let project_id = database.project_id();
-        if project_id.is_empty() {
+        let Some(project_id) = database.project_id() else {
             return Err(eyre::eyre!(
                 "the Cloud response for {} omitted its project",
                 database.reference()
             ));
-        }
+        };
         let workspace_id = match database.workspace_id() {
-            "" => {
-                self.client
+            Some(workspace_id) => workspace_id.to_owned(),
+            None => owner_workspace(
+                &self
+                    .client
                     .fetch::<Project>(&format!("/v1/projects/{project_id}"), "get project")
-                    .await?
-                    .workspace_id
-            }
-            workspace_id => workspace_id.to_owned(),
+                    .await?,
+            )?,
         };
         Ok(ProjectLink {
             project_id: project_id.to_owned(),
-            workspace_id: Some(workspace_id).filter(|workspace_id| !workspace_id.is_empty()),
+            workspace_id: Some(workspace_id),
         })
     }
 
@@ -596,24 +614,26 @@ impl Scope {
         }
     }
 
-    /// Choose among `candidates` without an explicit argument: the only one,
-    /// else a prompt, else an error listing them.
+    /// Choose among `candidates` without an explicit argument: the only one
+    /// (unless it is about to be removed), else a prompt, else an error
+    /// listing them.
     pub fn choose<T: Named>(&self, kind: Kind, mut candidates: Vec<T>) -> Result<T> {
+        let auto_pick = self.removing != Some(kind);
         match candidates.len() {
             0 => Err(CliError::new(format!("no {} found", kind.plural()))
                 .with_hint(kind.when_empty())
                 .into()),
-            1 => {
+            1 if auto_pick => {
                 let only = candidates.remove(0);
                 output::remark(&format!("Using {} {}", kind.noun(), only.label()));
                 Ok(only)
             }
             _ if self.interactive => self.prompt(kind, candidates),
-            _ => Err(CliError::new(format!(
-                "{} {} found; choose one",
-                candidates.len(),
-                kind.plural()
-            ))
+            count => Err(CliError::new(if auto_pick {
+                format!("{count} {} found; choose one", kind.plural())
+            } else {
+                format!("name the {} to remove", kind.noun())
+            })
             .with_hint(kind.how_to_pass())
             .with_candidates(candidates.iter().map(Candidate::from).collect())
             .into()),
@@ -634,6 +654,27 @@ impl Scope {
         let index: usize = select.interact()?;
         Ok(candidates.swap_remove(index))
     }
+}
+
+/// A direct lookup that found nothing, so a search by slug or name should
+/// follow. Server failures, auth errors, and timeouts are real errors.
+fn is_lookup_miss(error: &eyre::Report) -> bool {
+    error.downcast_ref::<HttpError>().is_some_and(|error| {
+        matches!(
+            error.status,
+            StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
+        )
+    })
+}
+
+/// A project's workspace, which every WFE project response carries.
+fn owner_workspace(project: &Project) -> Result<String> {
+    project.workspace_id.clone().ok_or_else(|| {
+        eyre::eyre!(
+            "the Cloud response for project {} omitted its workspace",
+            project.id
+        )
+    })
 }
 
 fn stale_link(kind: Kind, id: &str, error: &eyre::Report) -> eyre::Report {
@@ -784,6 +825,7 @@ mod tests {
             .unwrap(),
             link: Link::default(),
             interactive,
+            removing: None,
         }
     }
 

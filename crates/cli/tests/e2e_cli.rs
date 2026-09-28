@@ -595,7 +595,10 @@ fn default_instance_and_noninteractive_error_branches_run_through_the_binary() {
             .assert()
             .failure(),
     );
-    assert!(missing_prune_target.contains("Specify a local instance"));
+    assert!(
+        missing_prune_target.contains("nothing to prune"),
+        "{missing_prune_target}"
+    );
     let unconfirmed_prune = stderr(
         fixture
             .command()
@@ -709,4 +712,49 @@ async fn disk_start_tolerates_the_volume_create_race_but_surfaces_real_errors() 
             .failure(),
     );
     assert!(error.contains("permission denied"), "{error}");
+}
+
+#[test]
+fn json_mode_rejects_commands_without_a_json_result() {
+    let fixture = CliFixture::new_with_fake_runtime();
+    let project = fixture.root().join("json-gaps");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--no-skills"])
+        .assert()
+        .success();
+    for (args, expected) in [
+        (vec!["start", "--foreground", "--json"], "--foreground"),
+        (vec!["skills", "list", "--json"], "interactive"),
+    ] {
+        let error = stderr(
+            fixture
+                .command()
+                .current_dir(&project)
+                .args(&args)
+                .assert()
+                .failure(),
+        );
+        let error: serde_json::Value = serde_json::from_str(error.trim()).unwrap();
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(expected),
+            "{args:?}: {error}"
+        );
+    }
+
+    let pruned = stdout(
+        fixture
+            .command()
+            .current_dir(&project)
+            .args(["prune", "--all", "--yes", "--json"])
+            .assert()
+            .success(),
+    );
+    let pruned: serde_json::Value = serde_json::from_str(pruned.trim()).unwrap();
+    assert_eq!(pruned["pruned"][0]["instance"], "dev");
 }

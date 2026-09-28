@@ -5,25 +5,42 @@ use crate::prompts::{self, PruneSelection};
 use crate::{errors::CliError, output};
 use eyre::{eyre, Result};
 
+/// Prune one instance or all of them, emitting one result either way:
+/// `{"pruned": [{"instance": …, "removed": bool}, …]}`.
 pub async fn run(instance: Option<String>, all: bool, yes: bool) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
-    if all {
-        prune_all(&project, yes).await
-    } else if let Some(instance) = instance {
-        prune_one(&project, &instance).await
-    } else if prompts::is_interactive() {
-        match prompts::select_prune(&local_instances(&project))? {
-            PruneSelection::All => prune_all(&project, yes).await,
-            PruneSelection::Instance(instance) => prune_one(&project, &instance).await,
+    let selection = match (all, instance) {
+        (true, _) => PruneSelection::All,
+        (false, Some(instance)) => PruneSelection::Instance(instance),
+        (false, None) if prompts::is_interactive() => {
+            prompts::select_prune(&local_instances(&project))?
         }
-    } else {
-        Err(eyre!(
-            "Specify a local instance to prune, or use --all to prune all local instances"
-        ))
-    }
+        (false, None) => {
+            return Err(CliError::new("nothing to prune")
+                .with_hint("pass a local instance name, or --all for every local instance")
+                .into());
+        }
+    };
+    let pruned = match selection {
+        PruneSelection::All => prune_all(&project, yes).await?,
+        PruneSelection::Instance(instance) => {
+            let removed = prune_one(&project, &instance).await?;
+            vec![(instance, removed)]
+        }
+    };
+    output::emit(
+        &serde_json::json!({
+            "pruned": pruned
+                .iter()
+                .map(|(instance, removed)| serde_json::json!({"instance": instance, "removed": removed}))
+                .collect::<Vec<_>>(),
+        }),
+        |_| Ok(()),
+    )
 }
 
-async fn prune_one(project: &ProjectContext, instance: &str) -> Result<()> {
+/// Whether anything was removed.
+async fn prune_one(project: &ProjectContext, instance: &str) -> Result<bool> {
     // `instance` can come straight from the CLI arg (`helix prune <name>`), not just
     // from an already-validated `helix.toml` key — `local_instances`/`prune_all` only
     // iterate config keys, but the direct-name path below does not look the name up
@@ -44,16 +61,13 @@ async fn prune_one(project: &ProjectContext, instance: &str) -> Result<()> {
     if workspace.exists() {
         std::fs::remove_dir_all(workspace)?;
     }
-    let pruned = removed_container || removed_workspace;
-    if pruned {
+    let removed = removed_container || removed_workspace;
+    if removed {
         op.success();
     } else {
         output::outro(&format!("No local runtime resources found for {instance}"));
     }
-    output::emit(
-        &serde_json::json!({"instance": instance, "pruned": pruned}),
-        |_| Ok(()),
-    )
+    Ok(removed)
 }
 
 fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {
@@ -67,7 +81,7 @@ fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {
     instances
 }
 
-async fn prune_all(project: &ProjectContext, yes: bool) -> Result<()> {
+async fn prune_all(project: &ProjectContext, yes: bool) -> Result<Vec<(String, bool)>> {
     if !yes {
         if !prompts::is_interactive() {
             return Err(CliError::new(
@@ -81,13 +95,16 @@ async fn prune_all(project: &ProjectContext, yes: bool) -> Result<()> {
         );
         if !prompts::confirm("Prune every local instance?")? {
             output::info("Prune cancelled");
-            return Ok(());
+            return Ok(Vec::new());
         }
     }
-    for instance in project.config.local.keys() {
-        prune_one(project, instance).await?;
+    let mut instances: Vec<&String> = project.config.local.keys().collect();
+    instances.sort();
+    let mut pruned = Vec::with_capacity(instances.len());
+    for instance in instances {
+        pruned.push((instance.clone(), prune_one(project, instance).await?));
     }
-    Ok(())
+    Ok(pruned)
 }
 
 #[cfg(test)]

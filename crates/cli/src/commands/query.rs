@@ -220,12 +220,16 @@ async fn execute_cloud_query(
 /// JSON under `--json` — and is still printed under `--quiet`. A dim footer
 /// with status and latency goes to stderr.
 pub(crate) fn print_outcome(target: &Target, outcome: &Outcome) -> Result<()> {
-    if let Some(body) = &outcome.body {
-        output::emit(body, |body| {
-            println!("{}", output::json::pretty(body, console::colors_enabled()));
-            Ok(())
-        })?;
-    }
+    outcome
+        .body
+        .as_ref()
+        .map(|body| {
+            output::emit(body, |body| {
+                println!("{}", output::json::pretty(body, console::colors_enabled()));
+                Ok(())
+            })
+        })
+        .transpose()?;
     if Verbosity::current().show_normal() {
         eprintln!(
             "{}",

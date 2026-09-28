@@ -31,12 +31,7 @@ pub async fn run(action: Option<ServiceCredentialAction>) -> Result<()> {
                     "create service credential",
                 )
                 .await?;
-            let token = response
-                .get("token")
-                .and_then(Value::as_str)
-                .filter(|token| !token.is_empty())
-                .map(str::to_owned)
-                .ok_or_else(|| eyre!("the credential response omitted its one-time token"))?;
+            let token = super::one_time_token(&response, "credential")?;
             output::success(&format!(
                 "Created service credential {name} in {}",
                 workspace.label()
@@ -59,15 +54,14 @@ pub async fn run(action: Option<ServiceCredentialAction>) -> Result<()> {
                 for credential in credentials {
                     rows.row([
                         credential.label().to_owned(),
-                        match credential.grants.len() {
+                        match credential.grants.as_deref().map_or(0, <[Value]>::len) {
                             1 => "1 project".to_owned(),
                             count => format!("{count} projects"),
                         },
-                        if credential.expires_at.is_empty() {
-                            "never".to_owned()
-                        } else {
-                            credential.expires_at.clone()
-                        },
+                        credential
+                            .expires_at
+                            .clone()
+                            .unwrap_or_else(|| "never".to_owned()),
                         credential.id.clone(),
                     ]);
                 }
@@ -92,18 +86,26 @@ pub async fn run(action: Option<ServiceCredentialAction>) -> Result<()> {
                         ("Name", credential.label().to_owned()),
                         ("ID", credential.id.clone()),
                         ("Workspace", workspace.label().to_owned()),
-                        ("Expires", credential.expires_at.clone()),
+                        (
+                            "Expires",
+                            credential
+                                .expires_at
+                                .clone()
+                                .unwrap_or_else(|| "never".to_owned()),
+                        ),
                     ])
                 );
-                if !credential.grants.is_empty() {
-                    println!(
-                        "{}",
-                        output::json::pretty(
-                            &Value::Array(credential.grants.clone()),
-                            console::colors_enabled()
-                        )
-                    );
-                }
+                let Some(grants) = credential
+                    .grants
+                    .clone()
+                    .filter(|grants| !grants.is_empty())
+                else {
+                    return Ok(());
+                };
+                println!(
+                    "{}",
+                    output::json::pretty(&Value::Array(grants), console::colors_enabled())
+                );
                 Ok(())
             })
         }
@@ -135,14 +137,13 @@ pub async fn run(action: Option<ServiceCredentialAction>) -> Result<()> {
             if replace_grants {
                 body.insert("grants".into(), Value::Array(grants));
             }
-            if let Some(name) = name {
-                body.insert("name".into(), Value::String(name));
-            }
+            body.extend(name.map(|name| ("name".to_owned(), Value::String(name))));
             if expires_at.is_some() || clear_expiry {
                 body.insert("replaceExpiry".into(), Value::Bool(true));
-                if let Some(expires_at) = expires_at {
-                    body.insert("expiresAt".into(), Value::String(expires_at));
-                }
+                body.extend(
+                    expires_at
+                        .map(|expires_at| ("expiresAt".to_owned(), Value::String(expires_at))),
+                );
             }
             let response = scope
                 .client()

@@ -105,13 +105,28 @@ impl RawResponse {
                         .map(str::to_owned)
                 })
                 .unwrap_or_else(|| String::from_utf8_lossy(&self.body).trim().to_owned());
-            return Err(eyre!("Failed to {action}: HTTP {} {message}", self.status));
+            return Err(HttpError {
+                action: action.to_owned(),
+                status: self.status,
+                message,
+            }
+            .into());
         }
         if self.body.is_empty() {
             return Ok(Value::Null);
         }
         serde_json::from_slice(&self.body).wrap_err_with(|| format!("decode {action} response"))
     }
+}
+
+/// A non-success WFE response, typed so callers can react to the status
+/// (e.g. fall back to a search only on "not found").
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to {action}: HTTP {status} {message}")]
+pub struct HttpError {
+    pub action: String,
+    pub status: StatusCode,
+    pub message: String,
 }
 
 struct CredentialLock {
@@ -301,8 +316,16 @@ impl CloudClient {
             .into_value(action)
     }
 
+    /// Take the credential lock without blocking a runtime worker: `flock`
+    /// blocks, and the holder may be awaiting a refresh on another task, so
+    /// blocking every worker on the lock would deadlock concurrent requests.
+    async fn lock(&self) -> Result<CredentialLock> {
+        let path = self.lock_path.clone();
+        tokio::task::spawn_blocking(move || CredentialLock::acquire(&path)).await?
+    }
+
     async fn current_session(&self) -> Result<SessionCredentials> {
-        let _lock = CredentialLock::acquire(&self.lock_path)?;
+        let _lock = self.lock().await?;
         let session = load_session(&self.credentials_path).map_err(|error| {
             eyre!("{error}. Run 'helix auth login' to create a WorkOS session.")
         })?;
@@ -316,7 +339,7 @@ impl CloudClient {
         &self,
         rejected_access_token: &str,
     ) -> Result<SessionCredentials> {
-        let _lock = CredentialLock::acquire(&self.lock_path)?;
+        let _lock = self.lock().await?;
         let session = load_session(&self.credentials_path)?;
         if session.access_token != rejected_access_token
             && session.expires_at > unix_now() + REFRESH_WINDOW_SECONDS

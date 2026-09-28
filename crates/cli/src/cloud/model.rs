@@ -1,8 +1,8 @@
 //! Typed Helix Cloud resources as WFE returns them (proto3 JSON, camelCase).
 //!
-//! Only `id` is required; every other field defaults when absent. Fields the
-//! CLI does not model are kept in `extra`, so `--json` output never drops
-//! anything the server returned.
+//! Only `id` is required; every other field is optional and is omitted again
+//! on output when the server omitted it. Fields the CLI does not model are
+//! kept in `extra`, so `--json` output neither drops nor invents anything.
 
 use crate::config::DatabaseReference;
 use serde::{Deserialize, Serialize};
@@ -33,11 +33,12 @@ pub trait Named {
 /// ```
 /// use helix_cli::cloud::model::status_label;
 ///
-/// assert_eq!(status_label("RESOURCE_STATUS_ACTIVE"), "active");
-/// assert_eq!(status_label("ready"), "ready");
-/// assert_eq!(status_label(""), "unknown");
+/// assert_eq!(status_label(Some("RESOURCE_STATUS_ACTIVE")), "active");
+/// assert_eq!(status_label(Some("ready")), "ready");
+/// assert_eq!(status_label(None), "unknown");
 /// ```
-pub fn status_label(status: &str) -> String {
+pub fn status_label(status: Option<&str>) -> String {
+    let status = status.unwrap_or_default();
     match status.strip_prefix("RESOURCE_STATUS_").unwrap_or(status) {
         "" | "UNSPECIFIED" => "unknown".to_owned(),
         status => status.to_lowercase(),
@@ -48,14 +49,14 @@ pub fn status_label(status: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
     pub id: String,
-    #[serde(default)]
-    pub slug: String,
-    #[serde(default)]
-    pub display_name: String,
-    #[serde(default)]
-    pub region: String,
-    #[serde(default)]
-    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -64,27 +65,24 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub id: String,
-    #[serde(default)]
-    pub workspace_id: String,
-    #[serde(default)]
-    pub slug: String,
-    #[serde(default)]
-    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 /// Whether a cluster is dedicated to one project (and so is itself a
-/// database target) or shared between tenant databases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+/// database target) or shared between tenant databases. A view over the raw
+/// `access` string, which is kept verbatim for output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClusterAccess {
-    #[serde(rename = "CLUSTER_ACCESS_DEDICATED", alias = "dedicated")]
     Dedicated,
-    #[serde(rename = "CLUSTER_ACCESS_SHARED", alias = "shared")]
     Shared,
-    #[default]
-    #[serde(rename = "CLUSTER_ACCESS_UNSPECIFIED", other)]
-    Unspecified,
+    Unknown,
 }
 
 impl ClusterAccess {
@@ -92,7 +90,7 @@ impl ClusterAccess {
         match self {
             Self::Dedicated => "dedicated",
             Self::Shared => "shared",
-            Self::Unspecified => "unknown",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -101,45 +99,57 @@ impl ClusterAccess {
 #[serde(rename_all = "camelCase")]
 pub struct Cluster {
     pub id: String,
-    #[serde(default)]
-    pub project_id: String,
-    #[serde(default)]
-    pub workspace_id: String,
-    #[serde(default)]
-    pub slug: String,
-    #[serde(default)]
-    pub display_name: String,
-    #[serde(default)]
-    pub access: ClusterAccess,
-    #[serde(default)]
-    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl Cluster {
+    /// `CLUSTER_ACCESS_DEDICATED` and the short `dedicated` form both count.
+    pub fn access(&self) -> ClusterAccess {
+        match self.access.as_deref() {
+            Some("CLUSTER_ACCESS_DEDICATED" | "dedicated") => ClusterAccess::Dedicated,
+            Some("CLUSTER_ACCESS_SHARED" | "shared") => ClusterAccess::Shared,
+            _ => ClusterAccess::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tenant {
     pub id: String,
-    #[serde(default)]
-    pub cluster_id: String,
-    #[serde(default)]
-    pub project_id: String,
-    #[serde(default)]
-    pub workspace_id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub slug: String,
-    #[serde(default)]
-    pub display_name: String,
-    #[serde(default)]
-    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
-/// A queryable database: a dedicated cluster or a tenant.
+/// A queryable database: a dedicated cluster or a tenant. Serialized as the
+/// resource plus `"kind": "dedicated" | "tenant"`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Database {
@@ -162,24 +172,24 @@ impl Database {
         }
     }
 
-    pub fn status(&self) -> &str {
+    pub fn status(&self) -> Option<&str> {
         match self {
-            Self::Dedicated(cluster) => &cluster.status,
-            Self::Tenant(tenant) => &tenant.status,
+            Self::Dedicated(cluster) => cluster.status.as_deref(),
+            Self::Tenant(tenant) => tenant.status.as_deref(),
         }
     }
 
-    pub fn project_id(&self) -> &str {
+    pub fn project_id(&self) -> Option<&str> {
         match self {
-            Self::Dedicated(cluster) => &cluster.project_id,
-            Self::Tenant(tenant) => &tenant.project_id,
+            Self::Dedicated(cluster) => cluster.project_id.as_deref(),
+            Self::Tenant(tenant) => tenant.project_id.as_deref(),
         }
     }
 
-    pub fn workspace_id(&self) -> &str {
+    pub fn workspace_id(&self) -> Option<&str> {
         match self {
-            Self::Dedicated(cluster) => &cluster.workspace_id,
-            Self::Tenant(tenant) => &tenant.workspace_id,
+            Self::Dedicated(cluster) => cluster.workspace_id.as_deref(),
+            Self::Tenant(tenant) => tenant.workspace_id.as_deref(),
         }
     }
 }
@@ -190,25 +200,28 @@ impl Database {
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseKey {
     pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub access: String,
-    #[serde(default)]
-    pub permissions: Vec<String>,
-    #[serde(default)]
-    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl DatabaseKey {
-    /// `read-write` / `read-only` from the access enum, else the raw permissions.
+    /// `read-write` / `read-only` from the access enum, else the raw access
+    /// value, else the permissions.
     pub fn access_label(&self) -> String {
-        match self.access.strip_prefix("DATABASE_KEY_ACCESS_") {
-            Some(access) => access.to_lowercase().replace('_', "-"),
-            None if !self.access.is_empty() => self.access.clone(),
-            None => self.permissions.join(","),
+        match self.access.as_deref() {
+            Some(access) => access.strip_prefix("DATABASE_KEY_ACCESS_").map_or_else(
+                || access.to_owned(),
+                |access| access.to_lowercase().replace('_', "-"),
+            ),
+            None => self.permissions.as_deref().unwrap_or_default().join(","),
         }
     }
 }
@@ -219,12 +232,12 @@ impl DatabaseKey {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceCredential {
     pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub grants: Vec<Value>,
-    #[serde(default)]
-    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grants: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -234,10 +247,10 @@ impl Named for Workspace {
         &self.id
     }
     fn slug(&self) -> &str {
-        &self.slug
+        self.slug.as_deref().unwrap_or_default()
     }
     fn display_name(&self) -> &str {
-        &self.display_name
+        self.display_name.as_deref().unwrap_or_default()
     }
 }
 
@@ -246,10 +259,10 @@ impl Named for Project {
         &self.id
     }
     fn slug(&self) -> &str {
-        &self.slug
+        self.slug.as_deref().unwrap_or_default()
     }
     fn display_name(&self) -> &str {
-        &self.display_name
+        self.display_name.as_deref().unwrap_or_default()
     }
 }
 
@@ -258,10 +271,10 @@ impl Named for Cluster {
         &self.id
     }
     fn slug(&self) -> &str {
-        &self.slug
+        self.slug.as_deref().unwrap_or_default()
     }
     fn display_name(&self) -> &str {
-        &self.display_name
+        self.display_name.as_deref().unwrap_or_default()
     }
 }
 
@@ -270,15 +283,14 @@ impl Named for Tenant {
         &self.id
     }
     fn slug(&self) -> &str {
-        &self.slug
+        self.slug.as_deref().unwrap_or_default()
     }
     /// Tenants carry a `name`; older responses use `displayName`.
     fn display_name(&self) -> &str {
-        if self.name.is_empty() {
-            &self.display_name
-        } else {
-            &self.name
-        }
+        self.name
+            .as_deref()
+            .or(self.display_name.as_deref())
+            .unwrap_or_default()
     }
 }
 
@@ -316,7 +328,7 @@ impl Named for DatabaseKey {
         ""
     }
     fn display_name(&self) -> &str {
-        &self.name
+        self.name.as_deref().unwrap_or_default()
     }
 }
 
@@ -328,7 +340,7 @@ impl Named for ServiceCredential {
         ""
     }
     fn display_name(&self) -> &str {
-        &self.name
+        self.name.as_deref().unwrap_or_default()
     }
 }
 
@@ -338,14 +350,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn unknown_fields_survive_a_round_trip() {
+    fn output_matches_input_field_for_field() {
         let raw = json!({"id": "ws-1", "displayName": "Acme", "iconUrl": "https://x"});
         let workspace: Workspace = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(workspace.display_name, "Acme");
+        assert_eq!(workspace.display_name.as_deref(), Some("Acme"));
         assert_eq!(workspace.extra["iconUrl"], "https://x");
-        let back = serde_json::to_value(&workspace).unwrap();
-        assert_eq!(back["iconUrl"], "https://x");
-        assert_eq!(back["id"], "ws-1");
+        assert_eq!(
+            serde_json::to_value(&workspace).unwrap(),
+            raw,
+            "nothing dropped or invented"
+        );
+
+        let raw = json!({"id": "c", "access": "dedicated", "status": "RESOURCE_STATUS_ACTIVE"});
+        let cluster: Cluster = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&cluster).unwrap(),
+            raw,
+            "access is kept verbatim"
+        );
     }
 
     #[test]
@@ -358,18 +380,17 @@ mod tests {
     #[test]
     fn cluster_access_accepts_proto_and_short_forms() {
         for (raw, expected) in [
-            ("CLUSTER_ACCESS_DEDICATED", ClusterAccess::Dedicated),
-            ("dedicated", ClusterAccess::Dedicated),
-            ("shared", ClusterAccess::Shared),
-            ("CLUSTER_ACCESS_SHARED", ClusterAccess::Shared),
-            ("something-new", ClusterAccess::Unspecified),
+            (json!("CLUSTER_ACCESS_DEDICATED"), ClusterAccess::Dedicated),
+            (json!("dedicated"), ClusterAccess::Dedicated),
+            (json!("shared"), ClusterAccess::Shared),
+            (json!("CLUSTER_ACCESS_SHARED"), ClusterAccess::Shared),
+            (json!("something-new"), ClusterAccess::Unknown),
+            (Value::Null, ClusterAccess::Unknown),
         ] {
             let cluster: Cluster =
                 serde_json::from_value(json!({"id": "c", "access": raw})).unwrap();
-            assert_eq!(cluster.access, expected, "{raw}");
+            assert_eq!(cluster.access(), expected, "{raw}");
         }
-        let cluster: Cluster = serde_json::from_value(json!({"id": "c"})).unwrap();
-        assert_eq!(cluster.access, ClusterAccess::Unspecified);
     }
 
     #[test]
@@ -398,11 +419,12 @@ mod tests {
             DatabaseReference::Tenant("t-1".into())
         );
         assert_eq!(database.kind(), "tenant");
-        assert_eq!(database.project_id(), "p");
+        assert_eq!(database.project_id(), Some("p"));
         assert_eq!(status_label(database.status()), "active");
         let value = serde_json::to_value(&database).unwrap();
         assert_eq!(value["kind"], "tenant");
         assert_eq!(value["id"], "t-1");
+        assert!(value.get("workspaceId").is_none(), "absent stays absent");
 
         let cluster: Cluster =
             serde_json::from_value(json!({"id": "c-1", "workspaceId": "w"})).unwrap();
@@ -411,7 +433,7 @@ mod tests {
             database.reference(),
             DatabaseReference::Cluster("c-1".into())
         );
-        assert_eq!(database.workspace_id(), "w");
+        assert_eq!(database.workspace_id(), Some("w"));
         assert_eq!(
             serde_json::to_value(&database).unwrap()["kind"],
             "dedicated"
@@ -433,5 +455,6 @@ mod tests {
             key(json!({"id": "k", "permissions": ["read", "write"]})).access_label(),
             "read,write"
         );
+        assert_eq!(key(json!({"id": "k"})).access_label(), "");
     }
 }

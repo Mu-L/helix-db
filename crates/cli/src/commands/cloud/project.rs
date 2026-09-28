@@ -1,5 +1,5 @@
 use crate::cloud::model::{Named, Project};
-use crate::cloud::resolve::Scope;
+use crate::cloud::resolve::{Kind, Scope};
 use crate::output::{self, table};
 use crate::project::ProjectContext;
 use crate::{ProjectAction, ScopeArgs};
@@ -35,7 +35,7 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
                             ),
                             project.label()
                         ),
-                        project.slug.clone(),
+                        project.slug.clone().unwrap_or_default(),
                         project.id.clone(),
                     ]);
                 }
@@ -56,6 +56,10 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
             workspace,
             link,
         } => {
+            // --link needs a helix.toml; check before creating anything.
+            if link {
+                ProjectContext::find_and_load(None)?;
+            }
             let workspace = scope.workspace(workspace.as_deref()).await?;
             let slug = match slug {
                 Some(slug) => slug,
@@ -91,6 +95,7 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
             yes,
         } => {
             super::ensure_confirmable(yes)?;
+            let scope = scope.removing(Kind::Project);
             let project = scope.project(&ScopeArgs { workspace, project }).await?;
             let question = format!(
                 "Delete project {} ({})? This cannot be undone.",
@@ -135,8 +140,11 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
 fn write_link(project: &Project) -> Result<std::path::PathBuf> {
     let mut context = ProjectContext::find_and_load(None)?;
     context.config.project.id = Some(project.id.clone());
-    context.config.project.workspace_id =
-        Some(project.workspace_id.clone()).filter(|workspace| !workspace.is_empty());
+    context
+        .config
+        .project
+        .workspace_id
+        .clone_from(&project.workspace_id);
     let path = context.root.join("helix.toml");
     context.config.save_to_file(&path)?;
     Ok(path)
@@ -145,8 +153,11 @@ fn write_link(project: &Project) -> Result<std::path::PathBuf> {
 fn details(project: &Project) -> String {
     table::key_values(&[
         ("Name", project.label().to_owned()),
-        ("Slug", project.slug.clone()),
+        ("Slug", project.slug.clone().unwrap_or_default()),
         ("ID", project.id.clone()),
-        ("Workspace", project.workspace_id.clone()),
+        (
+            "Workspace",
+            project.workspace_id.clone().unwrap_or_default(),
+        ),
     ])
 }

@@ -63,7 +63,10 @@ fn run_production_update(force: bool, v1: bool) -> Result<()> {
             refresh_skills_if_installed();
             output::remark("Use --force to reinstall");
             output::outro(&format!("Already on v{current_version}"));
-            return Ok(());
+            return output::emit(
+                &serde_json::json!({"version": current_version, "updated": false}),
+                |_| Ok(()),
+            );
         }
 
         check_step.done_with_info(&format!(
@@ -86,8 +89,11 @@ fn run_production_update(force: bool, v1: bool) -> Result<()> {
         Step::with_messages("Downloading and installing", "Downloaded and installed");
     install_step.start();
 
-    match status.update() {
-        Ok(_) => install_step.done(),
+    let version = match status.update() {
+        Ok(updated) => {
+            install_step.done();
+            updated.version().to_owned()
+        }
         Err(error) => {
             install_step.fail();
             output::outro_cancel("Update failed");
@@ -95,11 +101,14 @@ fn run_production_update(force: bool, v1: bool) -> Result<()> {
                 .with_hint("check your internet connection and try again")
                 .into());
         }
-    }
+    };
     refresh_skills_if_installed();
     output::remark("Restart your terminal to use the new version");
     output::outro("Updated the Helix CLI");
-    Ok(())
+    output::emit(
+        &serde_json::json!({"version": version, "updated": true}),
+        |_| Ok(()),
+    )
 }
 
 /// Refresh the Helix agent skills as part of `helix update`, but only when they
@@ -124,11 +133,11 @@ fn run_test_update(outcome: crate::host_actions::TestUpdateOutcome) -> Result<()
     match outcome {
         crate::host_actions::TestUpdateOutcome::Updated => {
             output::success("CLI updated successfully");
-            Ok(())
+            output::emit(&serde_json::json!({"updated": true}), |_| Ok(()))
         }
         crate::host_actions::TestUpdateOutcome::Unchanged => {
             output::info("CLI is already up to date");
-            Ok(())
+            output::emit(&serde_json::json!({"updated": false}), |_| Ok(()))
         }
         crate::host_actions::TestUpdateOutcome::Error => {
             Err(eyre::eyre!("simulated CLI update failure"))

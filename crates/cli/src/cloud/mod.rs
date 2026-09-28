@@ -7,4 +7,4 @@ pub mod model;
 pub mod resolve;
 
 pub(crate) use client::deserialize_i64;
-pub use client::{CloudClient, SessionCredentials};
+pub use client::{CloudClient, HttpError, SessionCredentials};

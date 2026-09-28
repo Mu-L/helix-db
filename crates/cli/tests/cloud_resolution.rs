@@ -444,14 +444,21 @@ async fn init_cloud_without_flags_links_the_project_so_later_commands_work() {
         .assert()
         .success();
 
-    // `add cloud` defaults to the linked project but not to an added database.
+    // `add cloud` defaults to the linked project but never re-adds a database.
     let assert = fixture
         .command()
         .current_dir(&dir)
         .args(["add", "cloud", "--name", "second"])
         .assert()
+        .failure();
+    assert!(stderr(&assert).contains("every database in Graph is already in helix.toml"));
+    // Naming it explicitly still adds it under another name.
+    fixture
+        .command()
+        .current_dir(&dir)
+        .args(["add", "cloud", "--name", "second", "--database", "App"])
+        .assert()
         .success();
-    assert!(stderr(&assert).contains("Using database App"));
     let config = fs::read_to_string(dir.join("helix.toml")).unwrap();
     assert!(config.contains("[enterprise.second]"), "{config}");
 
@@ -593,4 +600,153 @@ async fn cloud_logs_say_when_there_is_nothing_to_show() {
         .assert()
         .failure();
     assert!(stderr(&assert).contains("RFC 3339"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn removal_never_takes_the_only_candidate_silently() {
+    let (server, fixture) = cloud().await;
+    get(
+        &server,
+        "/v1/workspaces",
+        json!({"workspaces":[{"id":"ws-1","displayName":"Acme"}]}),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/projects"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "projects":[{"id":"p-only","displayName":"Only"}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let assert = fixture
+        .command()
+        .args(["project", "delete", "-y"])
+        .assert()
+        .failure();
+    let error = stderr(&assert);
+    assert!(error.contains("name the project to remove"), "{error}");
+    assert!(error.contains("p-only"), "the candidate is listed: {error}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_create_with_link_checks_for_helix_toml_first() {
+    let (server, fixture) = cloud().await;
+    let dir = fixture.root().join("not-a-project");
+    fs::create_dir_all(&dir).unwrap();
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .args(["project", "create", "App", "--link"])
+        .assert()
+        .failure();
+    assert!(stderr(&assert).contains("no helix.toml found"));
+    assert!(
+        server.received_requests().await.unwrap().is_empty(),
+        "nothing was created"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server_errors_are_not_mistaken_for_unknown_names() {
+    let (server, fixture) = cloud().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/projects/p-1"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({"message":"backend down"})))
+        .mount(&server)
+        .await;
+    let assert = fixture
+        .command()
+        .args(["project", "get", "p-1"])
+        .assert()
+        .failure();
+    let error = stderr(&assert);
+    assert!(
+        error.contains("503") && error.contains("backend down"),
+        "{error}"
+    );
+    assert!(!error.contains("no project matches"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn database_create_prints_the_key_even_when_the_tenant_is_missing() {
+    let (server, fixture) = cloud().await;
+    get(
+        &server,
+        "/v1/projects/p-1",
+        json!({"id":"p-1","workspaceId":"ws-1","displayName":"Graph"}),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/tenants"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"token":"only-once"})))
+        .mount(&server)
+        .await;
+    let assert = fixture
+        .command()
+        .args([
+            "database",
+            "create",
+            "App",
+            "--project",
+            "p-1",
+            "--plan",
+            "starter",
+        ])
+        .assert()
+        .success();
+    assert_eq!(stdout(&assert), "only-once\n");
+}
+
+/// Refreshing a session holds a file lock across an HTTP request. Concurrent
+/// lookups must not block runtime threads on that lock, or the refresh never
+/// completes. Every refresh here returns a token that is already inside the
+/// refresh window, so each of the concurrent requests refreshes in turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_lookups_survive_session_refreshes() {
+    let server = MockServer::start().await;
+    let fixture = CliFixture::new().with_http_base(server.uri());
+    let soon = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 30;
+    fs::write(
+        fixture.helix_home().join("credentials"),
+        json!({"access_token":"a","refresh_token":"r","expires_at":soon,"email":"owner@example.com"})
+            .to_string(),
+    )
+    .unwrap();
+    Mock::given(method("POST"))
+        .and(path("/v1/auth/refresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "accessToken":"a2","refreshToken":"r2","expiresAt": soon.to_string()
+        })))
+        .mount(&server)
+        .await;
+    let workspaces: Vec<Value> = (0..24)
+        .map(|index| json!({"id": format!("ws-{index}"), "displayName": format!("W{index}")}))
+        .collect();
+    get(&server, "/v1/workspaces", json!({"workspaces": workspaces})).await;
+    Mock::given(method("GET"))
+        .and(path("/v1/projects"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"projects":[]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/projects/nowhere"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"message":"not found"})))
+        .mount(&server)
+        .await;
+    let assert = fixture
+        .command()
+        .args(["project", "get", "nowhere"])
+        .timeout(std::time::Duration::from_secs(30))
+        .assert()
+        .failure();
+    assert!(stderr(&assert).contains("no project matches 'nowhere'"));
 }

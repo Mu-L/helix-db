@@ -31,8 +31,8 @@ pub async fn run(action: Option<WorkspaceAction>) -> Result<()> {
                             ),
                             workspace.label()
                         ),
-                        workspace.slug.clone(),
-                        workspace.region.clone(),
+                        workspace.slug.clone().unwrap_or_default(),
+                        workspace.region.clone().unwrap_or_default(),
                         workspace.id.clone(),
                     ]);
                 }
@@ -53,9 +53,9 @@ pub async fn run(action: Option<WorkspaceAction>) -> Result<()> {
 fn details(workspace: &Workspace) -> String {
     table::key_values(&[
         ("Name", workspace.label().to_owned()),
-        ("Slug", workspace.slug.clone()),
+        ("Slug", workspace.slug.clone().unwrap_or_default()),
         ("ID", workspace.id.clone()),
-        ("Region", workspace.region.clone()),
-        ("Status", status_label(&workspace.status)),
+        ("Region", workspace.region.clone().unwrap_or_default()),
+        ("Status", status_label(workspace.status.as_deref())),
     ])
 }

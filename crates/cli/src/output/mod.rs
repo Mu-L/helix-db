@@ -516,32 +516,24 @@ impl Step {
             None => return,
         };
 
-        let mut message = self.completion.clone();
-        if let Some(info) = info {
-            message.push_str(&format!(
-                " {}",
-                style(format!("({info})")).dim().for_stderr()
-            ));
-        }
-        if let Some(started) = started.filter(|_| Verbosity::current().show_verbose()) {
-            message.push_str(&format!(
-                " {}",
-                style(format!("({})", format_duration(started.elapsed())))
-                    .dim()
-                    .for_stderr()
-            ));
-        }
+        let timing = started
+            .filter(|_| Verbosity::current().show_verbose())
+            .map(|started| format_duration(started.elapsed()));
+        let message = std::iter::once(self.completion.clone())
+            .chain(
+                info.map(str::to_owned)
+                    .into_iter()
+                    .chain(timing)
+                    .map(|detail| style(format!("({detail})")).dim().for_stderr().to_string()),
+            )
+            .collect::<Vec<_>>()
+            .join(" ");
         let symbol = if success {
             HelixTheme.submit_symbol()
         } else {
             HelixTheme.error_symbol()
         };
         log_line(&symbol, &message);
-    }
-
-    /// A verbose-only sub-step.
-    pub fn verbose_substep(message: &str) {
-        verbose(message);
     }
 }
 
@@ -687,7 +679,6 @@ mod tests {
             failed.start();
             failed.fail();
             Step::with_messages("Never started", "Done").done();
-            Step::verbose_substep("details");
             super::step("step");
             success("done");
             info("info");

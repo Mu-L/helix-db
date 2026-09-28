@@ -1,5 +1,5 @@
 use crate::cloud::model::Named as _;
-use crate::cloud::resolve::{Link, Scope};
+use crate::cloud::resolve::{Kind, Link, Scope};
 use crate::config::{
     EnterpriseInstanceConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
@@ -52,22 +52,41 @@ pub async fn run(path: Option<String>, target: Option<AddTarget>) -> Result<()> 
             validate_name(&name)?;
             ensure_available(&project, &name)?;
             let op = Operation::new("Adding", &name);
-            // Default to the linked project, but never to an already-added
-            // database: adding means choosing another one.
-            let link = Link {
-                databases: Vec::new(),
-                ..Link::from_config(&project.config)
+            let scope = Scope::new(Link::from_config(&project.config)).await?;
+            let args = ScopeArgs {
+                workspace,
+                project: target_project,
             };
-            let scope = Scope::new(link).await?;
-            let database = scope
-                .database(
-                    database.as_deref(),
-                    &ScopeArgs {
-                        workspace,
-                        project: target_project,
-                    },
-                )
-                .await?;
+            let database = match database {
+                Some(database) => scope.database(Some(&database), &args).await?,
+                // Adding means choosing a database that is not in helix.toml
+                // yet, from the linked (or chosen) project.
+                None => {
+                    let added: Vec<_> = project
+                        .config
+                        .enterprise
+                        .values()
+                        .map(|instance| instance.database.clone())
+                        .collect();
+                    let owner = scope.project(&args).await?;
+                    let (already_added, candidates): (Vec<_>, Vec<_>) = scope
+                        .databases_in(&owner)
+                        .await?
+                        .into_iter()
+                        .partition(|database| added.contains(&database.reference()));
+                    if candidates.is_empty() && !already_added.is_empty() {
+                        return Err(CliError::new(format!(
+                            "every database in {} is already in helix.toml",
+                            owner.label()
+                        ))
+                        .with_hint(
+                            "create another with `helix database create <name>`, or pass --database to add one again",
+                        )
+                        .into());
+                    }
+                    scope.choose(Kind::Database, candidates)?
+                }
+            };
             let owner = scope.owner(&database).await?;
             let linked = project.config.project.id.as_deref();
             if linked.is_some_and(|linked| linked != owner.project_id) {

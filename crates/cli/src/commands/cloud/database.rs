@@ -4,8 +4,8 @@ use crate::config::DatabaseReference;
 use crate::errors::CliError;
 use crate::output::{self, table};
 use crate::{prompts, DatabaseAction, DatabaseKeyAction, ScopeArgs};
-use eyre::{eyre, Result};
-use serde_json::{json, Value};
+use eyre::Result;
+use serde_json::json;
 
 pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
     let scope = Scope::load().await?;
@@ -116,19 +116,22 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
                     "create tenant database",
                 )
                 .await?;
-            let token = one_time_token(&response, "database")?;
-            let tenant: Tenant = serde_json::from_value(
-                response
-                    .get("tenant")
-                    .cloned()
-                    .ok_or_else(|| eyre!("database response omitted the tenant"))?,
-            )?;
-            output::success(&format!(
-                "Created database {} (tenant:{}) in {}",
-                tenant.label(),
-                tenant.id,
-                project.label()
-            ));
+            // The key exists only in this response, so nothing after reading
+            // it may fail before it is printed.
+            let token = super::one_time_token(&response, "database")?;
+            let tenant = response
+                .get("tenant")
+                .cloned()
+                .and_then(|tenant| serde_json::from_value::<Tenant>(tenant).ok());
+            output::success(&match tenant {
+                Some(tenant) => format!(
+                    "Created database {} (tenant:{}) in {}",
+                    tenant.label(),
+                    tenant.id,
+                    project.label()
+                ),
+                None => format!("Created database {name} in {}", project.label()),
+            });
             output::emit(&response, |_| {
                 output::warning(
                     "This read-write application key is shown once. The CLI did not store it.",
@@ -145,10 +148,11 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
             let typed = database
                 .as_deref()
                 .and_then(|database| database.parse::<DatabaseReference>().ok());
-            if let Some(reference @ DatabaseReference::Cluster(_)) = typed {
-                return Err(dedicated_delete_error(&reference));
-            }
+            typed
+                .filter(|reference| matches!(reference, DatabaseReference::Cluster(_)))
+                .map_or(Ok(()), |reference| Err(dedicated_delete_error(&reference)))?;
             super::ensure_confirmable(yes)?;
+            let scope = scope.removing(Kind::Database);
             let database = scope.database(database.as_deref(), &args).await?;
             let Database::Tenant(tenant) = &database else {
                 return Err(dedicated_delete_error(&database.reference()));
@@ -227,7 +231,7 @@ async fn run_key(scope: &Scope, action: DatabaseKeyAction) -> Result<()> {
                     "create database key",
                 )
                 .await?;
-            let token = one_time_token(&response, "key")?;
+            let token = super::one_time_token(&response, "key")?;
             output::success(&format!("Created a key for {}", database.label()));
             output::emit(&response, |_| {
                 output::warning("This application key is shown once. The CLI did not store it.");
@@ -251,7 +255,7 @@ async fn run_key(scope: &Scope, action: DatabaseKeyAction) -> Result<()> {
                     rows.row([
                         key.label().to_owned(),
                         key.access_label(),
-                        key.created_at.clone(),
+                        key.created_at.clone().unwrap_or_default(),
                         key.id.clone(),
                     ]);
                 }
@@ -313,16 +317,6 @@ fn path(reference: &DatabaseReference) -> String {
     }
 }
 
-/// The one-time token in a create response. It is never stored.
-fn one_time_token(response: &Value, what: &str) -> Result<String> {
-    response
-        .get("token")
-        .and_then(Value::as_str)
-        .filter(|token| !token.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| eyre!("the {what} response omitted its one-time token"))
-}
-
 fn dedicated_delete_error(reference: &DatabaseReference) -> eyre::Report {
     CliError::new(format!(
         "{reference} is a dedicated cluster; the CLI only deletes tenant databases"
@@ -333,7 +327,7 @@ fn dedicated_delete_error(reference: &DatabaseReference) -> eyre::Report {
 
 fn details(database: &Database) -> String {
     let cluster = match database {
-        Database::Tenant(tenant) => tenant.cluster_id.clone(),
+        Database::Tenant(tenant) => tenant.cluster_id.clone().unwrap_or_default(),
         Database::Dedicated(_) => String::new(),
     };
     table::key_values(&[
@@ -342,8 +336,14 @@ fn details(database: &Database) -> String {
         ("Kind", database.kind().to_owned()),
         ("Status", status_label(database.status())),
         ("Cluster", cluster),
-        ("Project", database.project_id().to_owned()),
-        ("Workspace", database.workspace_id().to_owned()),
+        (
+            "Project",
+            database.project_id().unwrap_or_default().to_owned(),
+        ),
+        (
+            "Workspace",
+            database.workspace_id().unwrap_or_default().to_owned(),
+        ),
     ])
 }
 
@@ -361,12 +361,5 @@ mod tests {
             path(&DatabaseReference::Cluster("c".into())),
             "/v1/clusters/c"
         );
-    }
-
-    #[test]
-    fn tokens_must_be_present_and_non_empty() {
-        assert_eq!(one_time_token(&json!({"token": "s"}), "key").unwrap(), "s");
-        assert!(one_time_token(&json!({"token": ""}), "key").is_err());
-        assert!(one_time_token(&json!({}), "key").is_err());
     }
 }

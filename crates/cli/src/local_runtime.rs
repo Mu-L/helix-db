@@ -296,7 +296,7 @@ impl LocalRuntime {
                 Err(_) => {}
             }
         }
-        Step::verbose_substep(&format!("Pulling {image}"));
+        crate::output::verbose(&format!("Pulling {image}"));
         let output = self
             .runtime_command()
             .args(["pull", image])

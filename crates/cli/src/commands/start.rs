@@ -1,4 +1,5 @@
 use crate::config::{InstanceInfo, LocalInstanceConfig, LocalStorageMode, S3StorageConfig};
+use crate::errors::CliError;
 use crate::local_runtime::LocalRuntime;
 use crate::output::{self, Operation};
 use crate::project::ProjectContext;
@@ -13,6 +14,13 @@ pub async fn run(
     image: crate::image::ImageArgs,
     persist: bool,
 ) -> Result<()> {
+    if foreground && output::OutputMode::current().is_json() {
+        return Err(
+            CliError::new("--foreground streams container logs, so it has no JSON result")
+                .with_hint("drop --foreground to start in the background and get a JSON result")
+                .into(),
+        );
+    }
     let mut project = ProjectContext::find_and_load(None)?;
     let _ = dotenvy::from_path(project.root.join(".env"));
     let instance = project.resolve_local_instance(instance, "Start which local instance?")?;
