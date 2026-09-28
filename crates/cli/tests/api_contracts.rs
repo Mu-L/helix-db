@@ -190,11 +190,18 @@ async fn only_typed_pre_dispatch_rejection_refreshes_and_retries() {
 
     fixture
         .command()
-        .args(["workspace", "list", "--format", "json"])
+        .args(["workspace", "list", "--json"])
         .assert()
         .success();
 
     server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/projects/project-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"project-1","workspaceId":"ws-1"
+        })))
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/v1/tenants"))
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
@@ -206,18 +213,8 @@ async fn only_typed_pre_dispatch_rejection_refreshes_and_retries() {
     let error = stderr(
         fixture
             .command()
-            .args([
-                "database",
-                "create",
-                "--project",
-                "project-1",
-                "--name",
-                "db",
-                "--slug",
-                "db",
-                "--plan",
-                "starter",
-            ])
+            .args(["database", "create", "db", "--project", "project-1"])
+            .args(["--plan", "starter"])
             .assert()
             .failure(),
     );
@@ -241,12 +238,12 @@ async fn workspace_and_query_error_paths_use_bearer_session() {
     let output = stdout(
         fixture
             .command()
-            .args(["workspace", "list", "--format", "json"])
+            .args(["workspace", "list", "--json"])
             .assert()
             .success(),
     );
     let value: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(value["workspaces"][0]["id"], "ws-1");
+    assert_eq!(value[0]["id"], "ws-1");
 
     let project = fixture.root().join("cloud-logs");
     fs::create_dir_all(&project).unwrap();

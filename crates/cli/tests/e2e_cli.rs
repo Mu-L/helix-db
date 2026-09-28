@@ -522,12 +522,13 @@ fn cloud_config_smoke_without_credentials() {
     let workspace_list = stderr(
         fixture
             .command()
-            .args(["workspace", "list", "--format", "json"])
+            .args(["workspace", "list", "--json"])
             .assert()
             .failure(),
     );
-    assert!(workspace_list.contains("Authentication required"));
-    assert!(workspace_list.contains("helix auth login"));
+    let error: serde_json::Value = serde_json::from_str(workspace_list.trim()).unwrap();
+    assert_eq!(error["error"]["message"], "not logged in to Helix Cloud");
+    assert_eq!(error["error"]["hint"], "run `helix auth login`");
 }
 
 #[test]

@@ -134,6 +134,18 @@ pub enum AddTarget {
     },
 }
 
+/// Where a Cloud command operates. Both are optional: they default to the
+/// project linked in helix.toml, then to the only candidate, then to a picker.
+#[derive(Args, Debug, Clone, Default)]
+pub struct ScopeArgs {
+    /// Workspace ID, slug, or name
+    #[arg(long, value_name = "WORKSPACE")]
+    pub workspace: Option<String>,
+    /// Project ID, slug, or name
+    #[arg(long, value_name = "PROJECT")]
+    pub project: Option<String>,
+}
+
 #[derive(Args, Debug, Clone, Default)]
 pub struct S3StorageArgs {
     /// Use an S3 or S3-compatible bucket/prefix, e.g. s3://bucket/prefix/
@@ -193,114 +205,89 @@ pub enum MetricsAction {
     Status,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
-pub enum ConfigOutputFormat {
-    #[default]
-    Human,
-    Json,
-}
-
-#[derive(Subcommand)]
-pub enum ConfigAction {
-    /// Discover accessible workspaces
-    Workspace {
-        #[command(subcommand)]
-        action: WorkspaceAction,
-    },
-    /// Manage linked project selection
-    Project {
-        #[command(subcommand)]
-        action: ProjectConfigAction,
-    },
-    /// List Helix Cloud clusters
-    Cluster {
-        #[command(subcommand)]
-        action: ClusterConfigAction,
-    },
-}
-
 #[derive(Subcommand)]
 pub enum WorkspaceAction {
-    /// List accessible workspaces
-    List {
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
-    },
-    /// Get a workspace by ID
+    /// List the workspaces you can access
+    List,
+    /// Show a workspace; defaults to the linked or only workspace
     Get {
-        workspace: String,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        /// Workspace ID, slug, or name
+        workspace: Option<String>,
     },
 }
 
 #[derive(Subcommand)]
-pub enum ProjectConfigAction {
-    /// List projects in an explicit or linked workspace
+pub enum ProjectAction {
+    /// List projects in a workspace
     List {
+        /// Workspace ID, slug, or name
         #[arg(long)]
-        workspace_id: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        workspace: Option<String>,
     },
-    /// Get a project; defaults to the project linked in helix.toml
+    /// Show a project; defaults to the project linked in helix.toml
     Get {
+        /// Project ID, slug, or name
         project: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        /// Workspace ID, slug, or name
+        #[arg(long)]
+        workspace: Option<String>,
     },
-    /// Create a project in an explicit workspace
+    /// Create a project
     Create {
-        #[arg(long)]
-        workspace: String,
-        #[arg(long)]
-        slug: String,
-        #[arg(long)]
+        /// Display name
         name: String,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        /// URL-safe slug; derived from the name when omitted
+        #[arg(long)]
+        slug: Option<String>,
+        /// Workspace ID, slug, or name
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Also link this directory's helix.toml to the new project
+        #[arg(long)]
+        link: bool,
     },
     /// Delete a project; defaults to the project linked in helix.toml
     Delete {
+        /// Project ID, slug, or name
         project: Option<String>,
+        /// Workspace ID, slug, or name
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Skip the confirmation prompt
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Link this helix.toml to a Cloud project by ID
+    /// Link this directory's helix.toml to a project
     Link {
-        project: String,
+        /// Project ID, slug, or name; prompts when omitted
+        project: Option<String>,
+        /// Workspace ID, slug, or name
         #[arg(long)]
         workspace: Option<String>,
     },
 }
 
 #[derive(Subcommand)]
-pub enum ClusterConfigAction {
-    /// List Helix Cloud clusters
+pub enum ClusterAction {
+    /// List clusters in the linked project, or in a workspace
     List {
-        #[arg(long)]
-        workspace_id: Option<String>,
-        #[arg(long)]
-        project_id: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
-
-    /// Get a cluster by ID
+    /// Show a cluster
     Get {
-        cluster_id: String,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        /// Cluster ID, slug, or name
+        cluster: Option<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
-
-    /// List indexes in a Helix Cloud cluster
+    /// List a cluster's active indexes
     #[command(alias = "indices")]
     Indexes {
-        /// Cluster ID; defaults to the current project's Cloud instance
-        #[arg(long, value_name = "CLUSTER_ID")]
-        cluster_id: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        /// Cluster ID, slug, or name
+        cluster: Option<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
 }
 
@@ -321,46 +308,51 @@ impl DatabaseKeyAccess {
 
 #[derive(Subcommand)]
 pub enum DatabaseAction {
-    /// List databases in an explicit or linked project
+    /// List a project's databases
     List {
-        #[arg(long)]
-        project: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
-    /// Get a database by cluster:<id> or tenant:<id>
+    /// Show a database
     Get {
+        /// Database ID, slug, name, or tenant:<id> / cluster:<id>
         database: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
-    /// Create a tenant database and display its default read-write key once
+    /// Create a tenant database and show its default read-write key once
     Create {
+        /// Display name
+        name: String,
+        /// URL-safe slug; derived from the name when omitted
         #[arg(long)]
-        project: Option<String>,
+        slug: Option<String>,
+        /// Dedicated cluster ID, slug, or name to create the tenant on
         #[arg(long)]
         cluster: Option<String>,
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        slug: String,
+        /// Plan code for a shared tenant; prompted when omitted
         #[arg(long)]
         plan: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
-    /// Delete a database by cluster:<id> or tenant:<id>
+    /// Delete a tenant database
     Delete {
+        /// Database ID, slug, name, or tenant:<id>
         database: Option<String>,
+        /// Skip the confirmation prompt
         #[arg(short = 'y', long)]
         yes: bool,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
-    /// List active indexes
+    /// List a database's active indexes
     #[command(alias = "indices")]
     Indexes {
+        /// Database ID, slug, name, or tenant:<id> / cluster:<id>
         database: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
     /// Manage application database keys
     Key {
@@ -371,101 +363,125 @@ pub enum DatabaseAction {
 
 #[derive(Subcommand)]
 pub enum DatabaseKeyAction {
-    /// Create an application key and display its token once
+    /// Create an application key and show its token once
     Create {
-        database: Option<String>,
-        #[arg(long)]
-        name: Option<String>,
+        /// Access the key grants
         #[arg(long, value_enum)]
         access: DatabaseKeyAccess,
-    },
-    /// List application keys; tokens are never returned
-    List {
+        /// Key name
+        #[arg(long)]
+        name: Option<String>,
+        /// Database ID, slug, name, or tenant:<id> / cluster:<id>
+        #[arg(long)]
         database: Option<String>,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// List application keys; tokens are never shown again
+    List {
+        /// Database ID, slug, name, or tenant:<id> / cluster:<id>
+        #[arg(long)]
+        database: Option<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
     /// Revoke an application key
     Revoke {
-        database: Option<String>,
-        #[arg(long)]
+        /// Key ID or name
         key: String,
+        /// Database ID, slug, name, or tenant:<id> / cluster:<id>
+        #[arg(long)]
+        database: Option<String>,
+        /// Skip the confirmation prompt
         #[arg(short = 'y', long)]
         yes: bool,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
 }
 
 #[derive(Subcommand)]
 pub enum ServiceCredentialAction {
-    /// Create a workspace-owned headless credential; displays its token once
+    /// Create a workspace-owned headless credential and show its token once
     Create {
-        #[arg(long)]
-        workspace: String,
+        /// Credential name
         #[arg(long)]
         name: String,
         /// Project grant: PROJECT_ID=project-read,query-read (repeatable)
-        #[arg(long = "grant")]
+        #[arg(long = "grant", required = true)]
         grants: Vec<String>,
+        /// Expiry as RFC 3339, e.g. 2030-01-01T00:00:00Z
         #[arg(long)]
         expires_at: Option<String>,
+        /// Workspace ID, slug, or name
+        #[arg(long)]
+        workspace: Option<String>,
     },
-    /// List credentials owned by a workspace
+    /// List a workspace's credentials
     List {
+        /// Workspace ID, slug, or name
         #[arg(long)]
-        workspace: String,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        workspace: Option<String>,
     },
-    /// Get a credential; its secret is never returned
+    /// Show a credential; its secret is never shown again
     Get {
-        #[arg(long)]
-        workspace: String,
+        /// Credential ID or name
         credential: String,
-        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
-        format: ConfigOutputFormat,
+        /// Workspace ID, slug, or name
+        #[arg(long)]
+        workspace: Option<String>,
     },
     /// Update name, expiry, or project grants without rotating the secret
     Update {
-        #[arg(long)]
-        workspace: String,
+        /// Credential ID or name
         credential: String,
+        /// New name
         #[arg(long)]
         name: Option<String>,
+        /// Replacement project grants (repeatable)
         #[arg(long = "grant")]
         grants: Vec<String>,
-        #[arg(long)]
+        /// New expiry as RFC 3339
+        #[arg(long, conflicts_with = "clear_expiry")]
         expires_at: Option<String>,
+        /// Remove the expiry
         #[arg(long)]
         clear_expiry: bool,
-    },
-    /// Revoke a service credential
-    Revoke {
+        /// Workspace ID, slug, or name
         #[arg(long)]
-        workspace: String,
+        workspace: Option<String>,
+    },
+    /// Revoke a credential
+    Revoke {
+        /// Credential ID or name
         credential: String,
+        /// Skip the confirmation prompt
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Workspace ID, slug, or name
+        #[arg(long)]
+        workspace: Option<String>,
     },
 }
 
 #[derive(Subcommand)]
 pub enum CloudApiAction {
-    Get {
-        path: String,
-    },
+    /// GET a /v1/... path
+    Get { path: String },
+    /// POST a JSON body to a /v1/... path
     Post {
         path: String,
         /// JSON request body
         #[arg(long, default_value = "{}")]
         body: String,
     },
+    /// PATCH a /v1/... path with a JSON body
     Patch {
         path: String,
         /// JSON request body
         #[arg(long, default_value = "{}")]
         body: String,
     },
-    Delete {
-        path: String,
-    },
+    /// DELETE a /v1/... path
+    Delete { path: String },
 }

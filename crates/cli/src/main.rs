@@ -4,8 +4,8 @@ use console::style;
 use eyre::Result;
 use helix_cli::{
     commands, errors, metrics_sender, output, update, AddTarget, AuthAction, CloudApiAction,
-    ClusterConfigAction, ConfigAction, DatabaseAction, InitTarget, MetricsAction,
-    ProjectConfigAction, S3StorageArgs, ServiceCredentialAction, SkillsAction, WorkspaceAction,
+    ClusterAction, DatabaseAction, InitTarget, MetricsAction, ProjectAction, S3StorageArgs,
+    ServiceCredentialAction, SkillsAction, WorkspaceAction,
 };
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
 
@@ -224,14 +224,7 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         action: AuthAction,
     },
 
-    /// Discover workspaces and manage project/database links
-    #[command(hide = true)]
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
-    },
-
-    /// Discover accessible Helix Cloud workspaces
+    /// List and inspect Helix Cloud workspaces
     Workspace {
         #[command(subcommand)]
         action: Option<WorkspaceAction>,
@@ -240,16 +233,16 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
     /// Manage Helix Cloud projects and this directory's link
     Project {
         #[command(subcommand)]
-        action: Option<ProjectConfigAction>,
+        action: Option<ProjectAction>,
     },
 
     /// List and inspect Helix Cloud clusters
     Cluster {
         #[command(subcommand)]
-        action: Option<ClusterConfigAction>,
+        action: Option<ClusterAction>,
     },
 
-    /// Manage Cloud databases and application database keys
+    /// Manage Helix Cloud databases and application keys
     Database {
         #[command(subcommand)]
         action: Option<DatabaseAction>,
@@ -651,17 +644,14 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Shell { instance }) => commands::shell::run(instance).await,
         Some(Commands::Auth { action }) => commands::auth::run(action).await,
-        Some(Commands::Config { action }) => commands::config::run(action).await,
-        Some(Commands::Workspace { action }) => commands::config::run_workspace(action).await,
-        Some(Commands::Project { action }) => commands::config::run_project(action).await,
-        Some(Commands::Cluster { action }) => commands::config::run_cluster(action).await,
-        Some(Commands::Database { action }) => {
-            commands::cloud_resources::run_database(action).await
-        }
+        Some(Commands::Workspace { action }) => commands::cloud::workspace::run(action).await,
+        Some(Commands::Project { action }) => commands::cloud::project::run(action).await,
+        Some(Commands::Cluster { action }) => commands::cloud::cluster::run(action).await,
+        Some(Commands::Database { action }) => commands::cloud::database::run(action).await,
         Some(Commands::ServiceCredential { action }) => {
-            commands::cloud_resources::run_service_credential(action).await
+            commands::cloud::service_credential::run(action).await
         }
-        Some(Commands::Api { action }) => commands::cloud_resources::run_api(action).await,
+        Some(Commands::Api { action }) => commands::cloud::api::run(action).await,
         Some(Commands::Prune { instance, all, yes }) => {
             commands::prune::run(instance, all, yes).await
         }
@@ -1267,7 +1257,7 @@ mod tests {
 
         match cli.command {
             Some(Commands::Workspace {
-                action: Some(WorkspaceAction::List { .. }),
+                action: Some(WorkspaceAction::List),
             }) => {}
             _ => panic!("expected workspace list command"),
         }
@@ -1279,7 +1269,7 @@ mod tests {
 
         match cli.command {
             Some(Commands::Project {
-                action: Some(ProjectConfigAction::Get { .. }),
+                action: Some(ProjectAction::Get { .. }),
             }) => {}
             _ => panic!("expected project get command"),
         }
@@ -1291,7 +1281,7 @@ mod tests {
 
         match cli.command {
             Some(Commands::Cluster {
-                action: Some(ClusterConfigAction::List { .. }),
+                action: Some(ClusterAction::List { .. }),
             }) => {}
             _ => panic!("expected cluster list command"),
         }
@@ -1299,17 +1289,62 @@ mod tests {
 
     #[test]
     fn root_cluster_indexes_command_parses() {
-        let cli = Cli::parse_from(["helix", "cluster", "indexes", "--cluster-id", "ent_123"]);
+        let cli = Cli::parse_from(["helix", "cluster", "indexes", "ent_123"]);
 
         match cli.command {
             Some(Commands::Cluster {
-                action:
-                    Some(ClusterConfigAction::Indexes {
-                        cluster_id,
-                        format: _,
-                    }),
-            }) => assert_eq!(cluster_id.as_deref(), Some("ent_123")),
+                action: Some(ClusterAction::Indexes { cluster, .. }),
+            }) => assert_eq!(cluster.as_deref(), Some("ent_123")),
             _ => panic!("expected cluster indexes command"),
+        }
+    }
+
+    #[test]
+    fn cloud_groups_default_to_listing_without_a_subcommand() {
+        for group in [
+            "workspace",
+            "project",
+            "cluster",
+            "database",
+            "service-credential",
+        ] {
+            assert!(Cli::try_parse_from(["helix", group]).is_ok(), "{group}");
+        }
+    }
+
+    #[test]
+    fn cloud_resources_are_optional_and_accept_scope_flags() {
+        let cli = Cli::parse_from([
+            "helix",
+            "database",
+            "get",
+            "--project",
+            "api",
+            "--workspace",
+            "acme",
+        ]);
+        match cli.command {
+            Some(Commands::Database {
+                action: Some(DatabaseAction::Get { database, scope }),
+            }) => {
+                assert!(database.is_none());
+                assert_eq!(scope.project.as_deref(), Some("api"));
+                assert_eq!(scope.workspace.as_deref(), Some("acme"));
+            }
+            _ => panic!("expected database get command"),
+        }
+    }
+
+    #[test]
+    fn removed_cloud_flags_are_rejected() {
+        for args in [
+            vec!["helix", "config", "workspace", "list"],
+            vec!["helix", "workspace", "list", "--format", "json"],
+            vec!["helix", "project", "list", "--workspace-id", "w"],
+            vec!["helix", "cluster", "indexes", "--cluster-id", "c"],
+            vec!["helix", "query", "dev", "--file", "r.json", "--compact"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
     }
 

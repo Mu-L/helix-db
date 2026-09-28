@@ -1,10 +1,12 @@
+use crate::cloud::model::Named as _;
+use crate::cloud::resolve::{Link, Scope};
 use crate::config::{
     EnterpriseInstanceConfig, HelixConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
 use crate::output;
 use crate::prompts;
 use crate::utils::command_exists;
-use crate::InitTarget;
+use crate::{InitTarget, ScopeArgs};
 use eyre::Result;
 use std::env;
 use std::fs;
@@ -89,17 +91,28 @@ pub async fn run(
         } => {
             validate_name(&name)?;
             let instance_name = name.clone();
-            let target =
-                crate::commands::config::resolve_cloud_target(database, project, workspace).await?;
+            // A new project never inherits the link of a project it sits in.
+            let scope = Scope::new(Link::default()).await?;
+            let database = scope
+                .database(database.as_deref(), &ScopeArgs { workspace, project })
+                .await?;
+            let owner = scope.owner(&database).await?;
             config.local.clear();
+            config.project.id = Some(owner.project_id.clone());
+            config.project.workspace_id = owner.workspace_id.clone();
             config.enterprise.insert(
                 name,
                 EnterpriseInstanceConfig {
-                    database: target.database,
-                    workspace_id: Some(target.workspace_id),
-                    project_id: Some(target.project_id),
+                    database: database.reference(),
+                    workspace_id: owner.workspace_id,
+                    project_id: Some(owner.project_id),
                 },
             );
+            output::step(&format!(
+                "Linked {} ({})",
+                database.label(),
+                database.reference()
+            ));
             enterprise_next_steps(&instance_name)
         }
     };
