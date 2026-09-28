@@ -8551,7 +8551,12 @@ helix workspace get <workspace-id> --format json
 
 Page type: Concept
 
-<Card title="Learn about graph databases" icon="diagram-project">
+# Learning center
+
+Plain-language answers about graph databases, vector search, full-text search, AI agent
+memory, and modern database architecture.
+
+  <Card title="Learn about graph databases" icon="diagram-project">
     A graph database stores entities as nodes and relationships as edges, so questions
     about how things connect are direct to ask.
 

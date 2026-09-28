@@ -400,9 +400,43 @@ h5 {
     font-family: inherit;
 }
 
-/* Learn: tile grid on the /learn home page. */
-.learn-tiles .columns {
-    row-gap: 1rem;
+/* Learn: full-width /learn home page (custom mode) with a centered hero. */
+.learn-page {
+    max-width: 88rem;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+}
+
+.learn-hero {
+    text-align: center;
+    max-width: 44rem;
+    margin: 0 auto 3rem;
+}
+
+.learn-hero h1 {
+    font-size: 3rem;
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 1rem;
+    color: #111827;
+}
+
+.dark .learn-hero h1 {
+    color: #ffffff;
+}
+
+.learn-hero p {
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+    opacity: 0.75;
+    margin: 0;
+}
+
+.learn-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+    gap: 1rem;
     align-items: stretch;
 }
 
