@@ -274,7 +274,11 @@ impl LocalRuntime {
         } else {
             None
         };
-        crate::output::info(&format!("Image: {reference} ({id})"));
+        // A short digest identifies the image without flooding the line.
+        let short_id = id
+            .get(..id.find(':').map_or(12, |colon| colon + 13))
+            .unwrap_or(&id);
+        crate::output::info(&format!("Image: {reference} ({short_id})"));
         Ok(PreparedStart {
             config: config.clone(),
             image: id,
@@ -292,7 +296,7 @@ impl LocalRuntime {
                 Err(_) => {}
             }
         }
-        Step::verbose_substep(&format!("Pulling {image}"));
+        crate::output::verbose(&format!("Pulling {image}"));
         let output = self
             .runtime_command()
             .args(["pull", image])

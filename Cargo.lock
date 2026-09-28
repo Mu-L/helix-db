@@ -2076,6 +2076,7 @@ dependencies = [
  "clap",
  "cliclack",
  "color-eyre",
+ "console 0.15.11",
  "dirs",
  "dotenvy",
  "dunce",

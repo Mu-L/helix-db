@@ -292,11 +292,12 @@ HelixDB Cloud is an object-storage-backed deployment with integrated vector and 
 
 ```bash
 helix auth login
-helix workspace list
-helix project link <project-id> --workspace <workspace-id>
-helix init cloud --database tenant:<tenant-id> --project <project-id> --workspace <workspace-id>
-helix query production --file examples/request.json
+helix init cloud   # pick a workspace, project, and database; links them in helix.toml
+helix query production --file request.json
 ```
+
+Cloud commands accept resources by ID, slug, or name and default to the linked project, so they
+need no IDs inside a linked directory. Add `--json` to any command for machine-readable output.
 
 Cloud queries go through the authenticated backend broker. Application keys returned by tenant or
 key creation are for direct gateway clients; the CLI displays them once and never stores or uses them.

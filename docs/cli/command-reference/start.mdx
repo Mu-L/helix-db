@@ -23,7 +23,7 @@ helix start [INSTANCE] [OPTIONS]
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Local instance name from `helix.toml`. If omitted in a TTY with multiple local instances, the CLI prompts. Otherwise defaults to `dev` when present, or the only local instance. |
+| `INSTANCE` | Local instance name from `helix.toml`. Defaults to `dev`, then the only local instance, then a picker in a terminal; otherwise the command fails and lists the local instances. |
 
 ## Options
 
@@ -39,6 +39,7 @@ helix start [INSTANCE] [OPTIONS]
 | `--image-version <VERSION>` | Override the image tag, or `sha256:<64 lowercase hex digits>`, for this run. | Configured tag |
 | `--pull <POLICY>` | `always`, `missing`, or `never`. Explicit policies also apply to the disk-mode SeaweedFS image. | Configured policy, otherwise `always` for `latest` and `missing` for other versions |
 | `--persist` | Write the resolved port, storage, image, and pull settings for this run back to `[local.<instance>]` in `helix.toml`, so future runs reuse them. | Off |
+| `--json` | Print `instance`, `url`, and `container` as JSON on stdout once ready, and never prompt. Not allowed with `--foreground`. | Off |
 
 ## Behavior
 
@@ -51,7 +52,7 @@ helix start [INSTANCE] [OPTIONS]
 - Default storage is in-memory. Passing `--disk` starts a SeaweedFS S3 sidecar (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest) that creates the `helix-db` bucket, waits up to 60 seconds for the bucket to accept signed requests, and runs `helixdb` with S3-compatible storage environment variables.
 - `--s3-region`, `--s3-endpoint-url`, and `--s3-allow-http` require `--storage-uri`, unless the instance already uses S3 storage; then they override its saved S3 settings for this run.
 - The CLI loads `.env` from the project root before starting. For S3 storage, it passes any `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_REGION`, and `AWS_DEFAULT_REGION` values from the environment into the container.
-- Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready.
+- Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready. Progress goes to stderr.
 - Foreground mode (`--rm`) streams the container's stdout/stderr until Ctrl-C, then removes the container.
 
 <Warning>

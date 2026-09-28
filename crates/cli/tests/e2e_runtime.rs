@@ -63,6 +63,10 @@ fn stdout(assert: Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).expect("stdout should be utf8")
 }
 
+fn stderr(assert: Assert) -> String {
+    String::from_utf8(assert.get_output().stderr.clone()).expect("stderr should be utf8")
+}
+
 struct RuntimeCleanup<'a> {
     fixture: &'a CliFixture,
     project: PathBuf,
@@ -158,20 +162,18 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .assert()
             .success(),
     );
-    assert!(status.contains("dev (local)"));
+    let dev = status
+        .lines()
+        .find(|line| line.starts_with("dev "))
+        .unwrap_or_default();
+    assert!(dev.contains("local"), "{status}");
     assert!(status.contains(&format!("localhost:{port}")));
 
     let initial_query = stdout(
         fixture
             .command()
             .current_dir(&project)
-            .args([
-                "query",
-                "dev",
-                "--file",
-                "examples/request.json",
-                "--compact",
-            ])
+            .args(["query", "dev", "--file", "examples/request.json", "--json"])
             .assert()
             .success(),
     );
@@ -185,7 +187,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
         .current_dir(&project)
         .args(["query", "dev", "--file"])
         .arg(&write_request)
-        .arg("--compact")
+        .arg("--json")
         .assert()
         .success();
 
@@ -198,7 +200,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -283,7 +285,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
         .current_dir(&project)
         .args(["query", "dev", "--file"])
         .arg(&write_request)
-        .arg("--compact")
+        .arg("--json")
         .assert()
         .success();
     // A restart must retain the image even when project settings now name an
@@ -305,7 +307,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -331,7 +333,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -395,7 +397,7 @@ fn disk_runtime_replaces_a_legacy_minio_sidecar() {
         assert!(output.status.success(), "{args:?}: {output:?}");
     }
 
-    let started = stdout(
+    let started = stderr(
         fixture
             .command()
             .current_dir(&project)
