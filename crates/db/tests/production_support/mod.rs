@@ -287,6 +287,12 @@ pub async fn vector_missing_partition_mapping_delete_contract() {
     crate::index_lifecycle::vector::run_missing_partition_mapping_delete_contract().await;
 }
 
+/// Proves the retained vector build cache reuses only exact committed checkpoints.
+#[cfg(not(test))]
+pub async fn vector_build_cache_contracts() {
+    crate::index_lifecycle::vector::run_build_cache_contracts().await;
+}
+
 /// Characterizes the independent finite-score magnitude oracle and active kernels.
 pub fn vector_magnitude_oracle_and_kernel_contracts() {
     crate::search::vector::run_magnitude_oracle_and_kernel_contracts();
@@ -338,6 +344,7 @@ pub async fn vector_search_contracts() {
 /// metric, corruption rejection, SimHash-directory lifecycle and seeding,
 /// bounded bridge traversal, termination reasons, membership, and recall.
 pub async fn vector_restricted_search_contracts() {
+    enable_vector_tracing();
     crate::search::vector::run_restricted_contracts().await;
 }
 

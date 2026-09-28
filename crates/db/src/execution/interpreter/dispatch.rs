@@ -28,7 +28,23 @@ impl<'db> ExecutionContext<'db> {
             return Ok(value);
         }
         let input = self.dependency_input(&step.dependencies)?;
+        let started = std::time::Instant::now();
         let value = Box::pin(self.execute_op(&step.op, input)).await?;
+        tracing::debug!(
+            target: "helix::query::step",
+            op = row_mode::op_name(&step.op),
+            rows = match &value {
+                ExecutionValue::Stream(rows) => rows.len(),
+                ExecutionValue::FoldedStream(_)
+                | ExecutionValue::Count(_)
+                | ExecutionValue::Bool(_)
+                | ExecutionValue::Scalars(_)
+                | ExecutionValue::IndexDdlReceipt(_)
+                | ExecutionValue::IndexOperationStatus(_) => 0,
+            },
+            elapsed_us = started.elapsed().as_micros() as u64,
+            "query step"
+        );
         self.check_execution_deadline()?;
         Ok(value)
     }
@@ -58,6 +74,11 @@ impl<'db> ExecutionContext<'db> {
             }
             exec::ExecOp::Filter { predicate } => {
                 execution_control.run(self.filter(input, predicate)).await
+            }
+            exec::ExecOp::IndexMembership { plan } => {
+                execution_control
+                    .run(self.index_membership(input, plan))
+                    .await
             }
             exec::ExecOp::Limit { count } => self.limit(input, count),
             exec::ExecOp::Skip { count } => self.skip(input, count),
@@ -95,6 +116,9 @@ impl<'db> ExecutionContext<'db> {
             // Keep that state off enclosing query futures and their thread stacks.
             exec::ExecOp::Mutation { plan } => Box::pin(self.execute_mutation(input, plan)).await,
             exec::ExecOp::IndexDdl { plan } => {
+                // DDL changes which indexes serve a set and may start a newer
+                // request snapshot.
+                self.prepared_memberships.clear();
                 if plan.requires_isolated_catalog_transaction() {
                     let resume_request_scope = self.has_request_write_scope();
                     self.check_execution_deadline()?;

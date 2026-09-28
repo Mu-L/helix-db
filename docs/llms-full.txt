@@ -542,6 +542,82 @@ The endpoint must be reachable from inside the container; container `localhost` 
 the host machine. `DB_PATH` is a logical prefix, not the storage directory. To use
 native directory persistence, set `HELIX_DATA_DIR` and mount the directory there.
 
+## Add a local disk cache
+
+By default the server caches data in memory only, so cold reads go to the object
+store. Set `HELIX_DISK_CACHE_DIR` to keep recently read data on local disk, ideally NVMe.
+The cache survives restarts. It requires `S3_BUCKET` or `HELIX_DATA_DIR`; memory
+storage rejects it.
+
+The disk cache needs an image released after v0.0.6. The v0.0.6 image and earlier
+ignore the `HELIX_DISK_CACHE_*` variables and keep memory-only caches, so replace
+`<version>` below with a later release.
+```bash
+sudo mkdir -p /data/helix-cache
+sudo chown 65532:65532 /data/helix-cache
+docker run --rm --name helixdb \
+  -p 6969:8080 \
+  -e S3_BUCKET=my-bucket \
+  -e S3_REGION=eu-west-2 \
+  -e HELIX_DISK_CACHE_DIR=/var/cache/helix \
+  -e HELIX_DISK_CACHE_BYTES=107374182400 \
+  -v /data/helix-cache:/var/cache/helix \
+  ghcr.io/helixdb/helixdb:<version>
+```
+
+In Compose, add the same variables and a volume to the `helix` service. A new
+named volume mounted at `/var/cache/helix` is already writable; a bind mount must be
+owned by `65532:65532`. Use one cache directory per running server and per
+database; changing `DB_PATH` on the same directory leaves the old database's
+full-text cache behind.
+
+| Variable | Purpose |
+| --- | --- |
+| `HELIX_DISK_CACHE_DIR` | Enables the disk cache in this directory, creating it if needed; unset keeps memory-only caches |
+| `HELIX_DISK_CACHE_BYTES` | Total disk budget in bytes, from 64 MiB to 1 TiB; defaults to 32 GiB |
+| `HELIX_DISK_CACHE_MEMORY_BYTES` | Memory tier of the block cache in bytes; defaults to 640 MiB |
+
+Half of the disk budget caches object-store files, 3/8 caches database blocks,
+and the rest caches full-text search data. With `S3_BUCKET`, the object-store cache
+also keeps the files the server writes; with `HELIX_DATA_DIR` they are already on
+local disk, so it keeps only the files the server reads. Changing the budget
+usually changes the block size, which discards the database-block cache at startup
+so it refills from the object store. The object-store cache keeps its files and
+evicts down to a smaller budget as it admits new data. Full-text search data is
+cached on demand, once searches have used it twice; the server downloads none of it
+at startup. At startup and on every admission the full-text cache evicts down to
+its share. Each of these trims spares data admitted or recorded as used in the
+second before it (use is recorded at most once a minute) and data still open in
+searches or the 64 MiB full-text memory cache, so the cache can stay over its share
+by that data until the next admission. It never caches a split larger than its
+whole share. After a restart, the first search to use each cached split reads and
+checksums the whole split, up to 64 MiB, before it answers. Budget at least twice
+the data the server reads often: the object-store cache fetches whole file parts
+(4 MiB, or smaller under a 2 GiB budget), so once that data outgrows half the
+budget, cold reads fetch more than memory-only caches would. The budget must also
+fit on the cache's filesystem; the server logs a warning at startup when it exceeds
+the free space there plus what the cache already uses.
+
+The block cache also indexes its disk share in memory, outside
+`HELIX_DISK_CACHE_MEMORY_BYTES`. Once full, the index takes roughly 2–9 MiB of RAM
+per GiB of `HELIX_DISK_CACHE_BYTES` (about 70–280 MiB at the default, 2–9 GiB at
+1 TiB), and a restart briefly needs about twice that while it rebuilds the index.
+Size the container's memory limit for this index as well as the memory tier.
+
+The block cache keeps up to 32,768 files open, so the server needs at least 34,792
+open files in the worst case (26,600 at the default budget), plus one per open
+full-text split. It raises its soft open-file limit to the hard limit at startup.
+If the container's hard limit is below that minimum, startup fails naming
+`HELIX_DISK_CACHE_BYTES`; raise the hard limit with `--ulimit nofile=65536:65536`.
+Lowering the budget is not a reliable fix. Run natively on macOS, the limit is also
+capped by `sysctl kern.maxfilesperproc`.
+
+Startup also fails with a message naming the variable when a size is invalid or
+out of range, a size is set without `HELIX_DISK_CACHE_DIR`, the cache directory is
+not writable or cannot be locked (some network and FUSE filesystems do not support
+locks), or another running server already uses it. Stop the old container before
+starting its replacement on the same cache directory.
+
 ## Stop or inspect
 
 ```bash
@@ -6727,18 +6803,18 @@ Disk mode starts a SeaweedFS S3 sidecar, creates the `helix-db` bucket, and stor
 
 ## Migrate MinIO disk data
 
-Earlier CLI releases ran disk mode on MinIO. MinIO has withdrawn its community container images, so disk mode now uses SeaweedFS, which cannot read MinIO's on-disk format. When the old `helix-<project>-<instance>-minio-data` volume exists, `helix start` removes the old MinIO sidecar, leaves that volume untouched, starts the instance on a new SeaweedFS volume, and prints a warning. `helix stop` keeps both volumes. `helix prune <instance>` deletes both.
+Earlier CLI releases ran disk mode on MinIO. MinIO has withdrawn its community container images, so disk mode now uses SeaweedFS, which cannot read MinIO's on-disk format. When the old `helix-<project>-<instance>-minio-data` volume exists, `helix start` removes the old MinIO sidecar, leaves that volume untouched, starts the instance on a new SeaweedFS volume, and prints a warning. `helix stop` keeps both volumes. `helix prune <instance>` deletes both, including anything written to the new volume since the upgrade.
 
-Copying the old data needs a MinIO server image that is still cached on your machine, such as `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`. Copy the objects into the new volume before Helix writes there. If you already started the instance with the new CLI, the new volume holds a fresh empty database: remove it with the `docker volume rm` line below. Use `podman` in place of `docker` if your project uses Podman.
+Copying the old data needs a MinIO server image that is still cached on your machine. Earlier CLI releases pulled `quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`; `docker image ls --digests quay.io/minio/minio` shows whether it is still cached. Copy the objects into the new volume before Helix writes there. If you already started the instance with the new CLI, the new volume holds a database that began empty at the upgrade. The `docker volume rm` line below deletes it along with anything written to it since then, so export that data first if you need it. Use `podman` in place of `docker` if your project uses Podman.
 
 ```bash
 helix stop dev
 base=helix-my-app-dev  # the Container value printed by `helix start dev`
-minio_image=quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+minio_image=quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
 seaweedfs_image=ghcr.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
-aws_cli=public.ecr.aws/aws-cli/aws-cli:2.37.4
+aws_cli=public.ecr.aws/aws-cli/aws-cli:2.37.4@sha256:fdd8d1fcbea9c371678dee5a40df8b178c7a781b4586605756ee28114c97ead6
 
-docker volume rm "$base-seaweedfs-data"  # only if the new CLI already started it
+docker volume rm "$base-seaweedfs-data"  # only if the new CLI started it; deletes post-upgrade writes
 docker network create helix-migrate
 docker run -d --name helix-migrate-minio --network helix-migrate \
   -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
@@ -8208,7 +8284,7 @@ helix start [INSTANCE] [OPTIONS]
 - The disk-mode SeaweedFS image defaults to `missing` unless a pull policy is explicitly configured.
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.
-- Default storage is in-memory. Passing `--disk` starts a SeaweedFS S3 sidecar (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest) that creates the `helix-db` bucket, waits until the bucket accepts signed requests, and runs `helixdb` with S3-compatible storage environment variables.
+- Default storage is in-memory. Passing `--disk` starts a SeaweedFS S3 sidecar (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest) that creates the `helix-db` bucket, waits up to 60 seconds for the bucket to accept signed requests, and runs `helixdb` with S3-compatible storage environment variables.
 - `--s3-region`, `--s3-endpoint-url`, and `--s3-allow-http` require `--storage-uri`, unless the instance already uses S3 storage; then they override its saved S3 settings for this run.
 - The CLI loads `.env` from the project root before starting. For S3 storage, it passes any `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_REGION`, and `AWS_DEFAULT_REGION` values from the environment into the container.
 - Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready.
