@@ -44,6 +44,11 @@ const DATABASE_GROUP_PREFIXES = new Map([
   ["Helix Cloud/Start Here", "database/helix-cloud/start-here/"],
   ["Helix Cloud/Connect and automate", "database/helix-cloud/connect/"],
   ["Helix Cloud/Operate", "database/helix-cloud/operate/"],
+  ["Learn/Graph databases", "learn/graph-databases/"],
+  ["Learn/Vector search", "learn/vector-search/"],
+  ["Learn/Full-text search", "learn/full-text-search/"],
+  ["Learn/AI memory", "learn/ai-memory/"],
+  ["Learn/Database architecture", "learn/database-architecture/"],
 ]);
 const CLIENT_SETUP_MARKER = "{/* client-setup: no JSON representation */}";
 const PACKAGE_INSTALL_MARKER =
@@ -163,7 +168,7 @@ function lineNumber(content, offset) {
 
 const config = JSON.parse(fs.readFileSync(DOCS_JSON, "utf8"));
 const tabNames = (config.navigation?.tabs ?? []).map((tab) => tab.tab);
-const expectedTabs = ["HelixDB", "Helix Cloud", "CLI Reference"];
+const expectedTabs = ["HelixDB", "Helix Cloud", "CLI Reference", "Learn"];
 if (JSON.stringify(tabNames) !== JSON.stringify(expectedTabs)) {
   errors.push(`docs.json: tabs must be exactly ${expectedTabs.join(", ")}`);
 }
@@ -293,11 +298,14 @@ const docsFiles = filesUnder(DOCS_ROOT).filter(
 );
 for (const file of docsFiles) {
   const relative = path.relative(DOCS_ROOT, file);
-  if (relative.startsWith("database/") && relative.endsWith(".mdx")) {
+  if (
+    (relative.startsWith("database/") || relative.startsWith("learn/")) &&
+    relative.endsWith(".mdx")
+  ) {
     const route = relative.slice(0, -".mdx".length);
     if (!routeCounts.has(route)) {
       errors.push(
-        `${relative}: database page is not present in sidebar navigation`,
+        `${relative}: documentation page is not present in sidebar navigation`,
       );
     }
   }

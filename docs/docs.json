@@ -268,6 +268,58 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Learn",
+        "groups": [
+          {
+            "group": "Learning center",
+            "pages": [
+              "learn/index"
+            ]
+          },
+          {
+            "group": "Graph databases",
+            "pages": [
+              "learn/graph-databases/what-is-a-graph-database",
+              "learn/graph-databases/graph-vs-relational-database",
+              "learn/graph-databases/what-is-a-knowledge-graph",
+              "learn/graph-databases/what-is-a-property-graph"
+            ]
+          },
+          {
+            "group": "Vector search",
+            "pages": [
+              "learn/vector-search/what-is-vector-search",
+              "learn/vector-search/what-is-a-vector-database",
+              "learn/vector-search/filtered-vector-search",
+              "learn/vector-search/vector-distance-metrics"
+            ]
+          },
+          {
+            "group": "Full-text search",
+            "pages": [
+              "learn/full-text-search/what-is-full-text-search",
+              "learn/full-text-search/what-is-bm25",
+              "learn/full-text-search/hybrid-search"
+            ]
+          },
+          {
+            "group": "AI memory",
+            "pages": [
+              "learn/ai-memory/what-is-ai-agent-memory",
+              "learn/ai-memory/long-term-memory-for-ai-agents",
+              "learn/ai-memory/what-is-graphrag"
+            ]
+          },
+          {
+            "group": "Database architecture",
+            "pages": [
+              "learn/database-architecture/object-storage-databases",
+              "learn/database-architecture/one-database-for-graph-vector-and-text"
+            ]
+          }
+        ]
       }
     ]
   },
@@ -963,15 +1015,15 @@
     },
     {
       "source": "/embeddings",
-      "destination": "/database/helix-db/query-guides/vector-indexes"
+      "destination": "/learn/vector-search/what-is-vector-search"
     },
     {
       "source": "/semantic-search",
-      "destination": "/database/helix-db/query-guides/vector-indexes"
+      "destination": "/learn/vector-search/what-is-vector-search"
     },
     {
       "source": "/similarity-search",
-      "destination": "/database/helix-db/query-guides/vector-indexes"
+      "destination": "/learn/vector-search/what-is-vector-search"
     },
     {
       "source": "/full-text-search",
@@ -987,7 +1039,7 @@
     },
     {
       "source": "/bm25",
-      "destination": "/database/helix-db/query-guides/text-indexes"
+      "destination": "/learn/full-text-search/what-is-bm25"
     },
     {
       "source": "/keyword-search",
@@ -1232,6 +1284,146 @@
     {
       "source": "/hql-v1",
       "destination": "/legacy/hql"
+    },
+    {
+      "source": "/graph-database",
+      "destination": "/learn/graph-databases/what-is-a-graph-database"
+    },
+    {
+      "source": "/graph-databases",
+      "destination": "/learn/graph-databases/what-is-a-graph-database"
+    },
+    {
+      "source": "/what-is-a-graph-database",
+      "destination": "/learn/graph-databases/what-is-a-graph-database"
+    },
+    {
+      "source": "/graph-vs-relational",
+      "destination": "/learn/graph-databases/graph-vs-relational-database"
+    },
+    {
+      "source": "/graph-vs-sql",
+      "destination": "/learn/graph-databases/graph-vs-relational-database"
+    },
+    {
+      "source": "/knowledge-graph",
+      "destination": "/learn/graph-databases/what-is-a-knowledge-graph"
+    },
+    {
+      "source": "/knowledge-graphs",
+      "destination": "/learn/graph-databases/what-is-a-knowledge-graph"
+    },
+    {
+      "source": "/property-graph",
+      "destination": "/learn/graph-databases/what-is-a-property-graph"
+    },
+    {
+      "source": "/labeled-property-graph",
+      "destination": "/learn/graph-databases/what-is-a-property-graph"
+    },
+    {
+      "source": "/what-is-vector-search",
+      "destination": "/learn/vector-search/what-is-vector-search"
+    },
+    {
+      "source": "/vector-database",
+      "destination": "/learn/vector-search/what-is-a-vector-database"
+    },
+    {
+      "source": "/vector-databases",
+      "destination": "/learn/vector-search/what-is-a-vector-database"
+    },
+    {
+      "source": "/vector-db",
+      "destination": "/learn/vector-search/what-is-a-vector-database"
+    },
+    {
+      "source": "/filtered-vector-search",
+      "destination": "/learn/vector-search/filtered-vector-search"
+    },
+    {
+      "source": "/vector-filtering",
+      "destination": "/learn/vector-search/filtered-vector-search"
+    },
+    {
+      "source": "/distance-metrics",
+      "destination": "/learn/vector-search/vector-distance-metrics"
+    },
+    {
+      "source": "/cosine-similarity",
+      "destination": "/learn/vector-search/vector-distance-metrics"
+    },
+    {
+      "source": "/what-is-full-text-search",
+      "destination": "/learn/full-text-search/what-is-full-text-search"
+    },
+    {
+      "source": "/inverted-index",
+      "destination": "/learn/full-text-search/what-is-full-text-search"
+    },
+    {
+      "source": "/hybrid-search",
+      "destination": "/learn/full-text-search/hybrid-search"
+    },
+    {
+      "source": "/rrf",
+      "destination": "/learn/full-text-search/hybrid-search"
+    },
+    {
+      "source": "/reciprocal-rank-fusion",
+      "destination": "/learn/full-text-search/hybrid-search"
+    },
+    {
+      "source": "/memory",
+      "destination": "/learn/ai-memory/what-is-ai-agent-memory"
+    },
+    {
+      "source": "/agent-memory",
+      "destination": "/learn/ai-memory/what-is-ai-agent-memory"
+    },
+    {
+      "source": "/ai-memory",
+      "destination": "/learn/ai-memory/what-is-ai-agent-memory"
+    },
+    {
+      "source": "/ai-agent-memory",
+      "destination": "/learn/ai-memory/what-is-ai-agent-memory"
+    },
+    {
+      "source": "/llm-memory",
+      "destination": "/learn/ai-memory/what-is-ai-agent-memory"
+    },
+    {
+      "source": "/long-term-memory",
+      "destination": "/learn/ai-memory/long-term-memory-for-ai-agents"
+    },
+    {
+      "source": "/memory-architecture",
+      "destination": "/learn/ai-memory/long-term-memory-for-ai-agents"
+    },
+    {
+      "source": "/graphrag",
+      "destination": "/learn/ai-memory/what-is-graphrag"
+    },
+    {
+      "source": "/graph-rag",
+      "destination": "/learn/ai-memory/what-is-graphrag"
+    },
+    {
+      "source": "/object-storage",
+      "destination": "/learn/database-architecture/object-storage-databases"
+    },
+    {
+      "source": "/storage-compute-separation",
+      "destination": "/learn/database-architecture/object-storage-databases"
+    },
+    {
+      "source": "/graph-vector-database",
+      "destination": "/learn/database-architecture/one-database-for-graph-vector-and-text"
+    },
+    {
+      "source": "/multi-model-database",
+      "destination": "/learn/database-architecture/one-database-for-graph-vector-and-text"
     }
   ],
   "search": {
@@ -1268,12 +1460,12 @@
   "seo": {
     "indexing": "all",
     "metatags": {
-      "description": "HelixDB Documentation to get you started with HelixDB",
-      "keywords": "HelixDB, Documentation, Getting Started, CLI, SDK, Guides, Features, Blogs, RAG, Database, Database, Graph Database, Vector Database, AI, Agents, LLMs, Knowledge Graphs, Retrieval Augmented Generation, Knowledge Graphs, AI Agents, Document databases",
+      "description": "HelixDB is an open-source graph database with native vector search and BM25 full-text search, built on object storage. Guides for graph data, vector search, hybrid search, and AI agent memory.",
+      "keywords": "HelixDB, graph database, open source graph database, vector database, vector search, filtered vector search, full-text search, BM25, hybrid search, knowledge graph, GraphRAG, RAG, AI agent memory, long-term memory for LLMs, memory infrastructure, object storage database, property graph, SDK, CLI",
       "robots": "all",
       "googlebot": "index, follow",
       "og:title": "HelixDB Docs",
-      "og:description": "HelixDB Documentation",
+      "og:description": "Documentation and learning center for HelixDB, the open-source graph database with native vector and full-text search.",
       "og:type": "website",
       "og:site_name": "HelixDB Documentation",
       "category": "Technology",

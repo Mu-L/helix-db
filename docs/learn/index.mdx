@@ -1,0 +1,94 @@
+---
+title: "Learning center"
+description: "Plain-language guides to graph databases, vector search, full-text search, AI agent memory, and modern database architecture"
+sidebarTitle: "Learning center"
+pageType: "Concept"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+The learning center explains the ideas behind modern data infrastructure for AI
+applications: how graph databases model relationships, how vector and full-text search
+rank results, how agents remember, and why storage architecture decides cost at scale.
+Each page answers one question from first principles and ends with how HelixDB
+approaches it.
+
+## Graph databases
+
+<CardGroup cols={2}>
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, traversals, and when a graph is the right model.
+  </Card>
+  <Card title="Graph vs relational databases" icon="table" href="/learn/graph-databases/graph-vs-relational-database">
+    How multi-hop questions differ from joins, and when each model fits.
+  </Card>
+  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+    Entities, relationships, and provenance for search and LLMs.
+  </Card>
+  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+    Labels and properties on nodes and edges, compared with RDF.
+  </Card>
+</CardGroup>
+
+## Vector search
+
+<CardGroup cols={2}>
+  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, nearest neighbors, and approximate search.
+  </Card>
+  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+    What a vector store does and where vector-only storage falls short.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Pre-filtering, post-filtering, and returning the right top k.
+  </Card>
+  <Card title="Vector distance metrics" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+    Cosine, Euclidean, and Manhattan distance, and how to choose.
+  </Card>
+</CardGroup>
+
+## Full-text search
+
+<CardGroup cols={2}>
+  <Card title="What is full-text search?" icon="magnifying-glass" href="/learn/full-text-search/what-is-full-text-search">
+    Inverted indexes, analyzers, and relevance ranking.
+  </Card>
+  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
+    The ranking function behind most keyword search, explained.
+  </Card>
+  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+    Combining keyword and vector results with rank fusion.
+  </Card>
+</CardGroup>
+
+## AI memory
+
+<CardGroup cols={2}>
+  <Card title="What is AI agent memory?" icon="memory" href="/learn/ai-memory/what-is-ai-agent-memory">
+    Working, episodic, and semantic memory for LLM agents.
+  </Card>
+  <Card title="Building long-term memory" icon="layer-group" href="/learn/ai-memory/long-term-memory-for-ai-agents">
+    A data model and read and write paths for durable agent memory.
+  </Card>
+  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+    Retrieval that follows relationships, compared with vector RAG.
+  </Card>
+</CardGroup>
+
+## Database architecture
+
+<CardGroup cols={2}>
+  <Card title="Databases on object storage" icon="cloud" href="/learn/database-architecture/object-storage-databases">
+    Separating storage from compute, and what it means for cost.
+  </Card>
+  <Card title="Graph, vector, and text in one database" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+    The hidden costs of stitching separate stores together.
+  </Card>
+</CardGroup>
+
+## Build with HelixDB
+
+HelixDB is an open-source graph database with native vector search and BM25 full-text
+search, built on object storage. Start a local instance in a few commands with
+[Get started](/database/helix-db/start-here/quickstart), or read the
+[introduction](/database/helix-db/start-here/introduction).
