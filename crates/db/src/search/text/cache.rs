@@ -327,6 +327,14 @@ impl Drop for StagingFileGuard {
     }
 }
 
+/// Whether a cache still runs disk cleanups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiskCleanup {
+    Open,
+    /// [`FtsCache::close`] has waited out every cleanup; none runs again.
+    Closed,
+}
+
 /// Test hook that `cleanup_disk` calls with an eviction candidate's hash.
 #[cfg(test)]
 type EvictionHook = Box<dyn FnMut([u8; 32]) + Send>;
@@ -344,6 +352,9 @@ pub(crate) struct FtsCache {
     access_writes: Mutex<HashMap<[u8; 32], Instant>>,
     demand: Mutex<DemandTracker>,
     tasks: AsyncMutex<Vec<JoinHandle<()>>>,
+    /// Held by a disk cleanup until its blocking work ends, which outlives
+    /// an abort of the task awaiting it.
+    cleanup: Arc<AsyncMutex<DiskCleanup>>,
     stats: FtsStats,
     disk_artifact_count: AtomicU64,
     disk_artifact_bytes: AtomicU64,
@@ -401,6 +412,7 @@ impl FtsCache {
             access_writes: Mutex::new(HashMap::new()),
             demand: Mutex::new(DemandTracker::default()),
             tasks: AsyncMutex::new(Vec::new()),
+            cleanup: Arc::new(AsyncMutex::new(DiskCleanup::Open)),
             stats: FtsStats::default(),
             disk_artifact_count: AtomicU64::new(disk_artifact_count),
             disk_artifact_bytes: AtomicU64::new(disk_artifact_bytes),
@@ -624,6 +636,9 @@ impl FtsCache {
         for handle in handles {
             let _ = handle.await;
         }
+        // An aborted task's blocking cleanup still holds the lock, so every
+        // deletion ends before the caller releases the cache directory.
+        *self.cleanup.lock().await = DiskCleanup::Closed;
     }
 
     fn memory_hit(&self, key: &TextSplitCacheKey) -> Option<Arc<OpenedTextSplit>> {
@@ -892,16 +907,23 @@ impl FtsCache {
     /// a killed process leaves behind.
     ///
     /// Runs on the blocking pool, because each eviction unlinks
-    /// synchronously while it holds the lease lock.
+    /// synchronously while it holds the lease lock. Aborting the calling task
+    /// does not stop that work, so it holds the cleanup lock until it ends:
+    /// [`Self::close`] waits for it, and once closed no cleanup runs.
     pub(crate) async fn cleanup_disk(self: &Arc<Self>) -> Result<(), HelixDbError> {
         let (Some(disk), Some(blob_dir), Some(staging_dir)) =
             (self.config.disk(), self.blob_dir(), self.staging_dir())
         else {
             return Ok(());
         };
+        let cleanup = Arc::clone(&self.cleanup).lock_owned().await;
+        if *cleanup == DiskCleanup::Closed {
+            return Ok(());
+        }
         let budget = disk.bytes() as u64;
         let cache = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            let _cleanup = cleanup;
             let now = SystemTime::now();
             fs::read_dir(&staging_dir)
                 .into_iter()
@@ -1866,6 +1888,86 @@ mod tests {
                 .expect("artifact status")
         });
         assert_eq!(remaining, [false, false, true]);
+        assert_eq!(cache.snapshot().disk_evictions, 1);
+    }
+
+    /// Shutdown aborts a trim's task but not the blocking eviction it
+    /// started. Close waits for that eviction, so its caller can release the
+    /// cache directory, and no trim runs once the cache is closed.
+    #[tokio::test]
+    async fn close_waits_for_an_aborted_trim_and_stops_later_ones() {
+        let database = "fts-cache-close-aborted-trim";
+        let disk = tempfile::tempdir().expect("disk cache");
+        let cache = cache(
+            database,
+            Arc::new(InMemory::new()),
+            Some(disk.path().to_path_buf()),
+            1,
+            2,
+            Duration::from_secs(1),
+        );
+        let [evicted, kept, late] = [[0xc0; 32], [0xc1; 32], [0xc2; 32]];
+        for (last_access_unix_ms, hash) in [evicted, kept].into_iter().enumerate() {
+            tokio_fs::write(cache.artifact_path(hash).expect("artifact path"), b"aa")
+                .await
+                .expect("artifact");
+            let metadata = serde_json::to_vec(&ArtifactMetadata {
+                size_bytes: 2,
+                last_access_unix_ms: last_access_unix_ms as u64,
+            })
+            .expect("serialize metadata");
+            tokio_fs::write(cache.metadata_path(hash).expect("metadata path"), metadata)
+                .await
+                .expect("write metadata");
+        }
+        let (entered, entered_signal) = std::sync::mpsc::channel();
+        let (release, release_signal) = std::sync::mpsc::channel::<()>();
+        *cache.before_eviction.lock() = Some(Box::new(move |_| {
+            let _ = entered.send(());
+            let _ = release_signal.recv();
+        }));
+
+        let trim = tokio::spawn({
+            let cache = Arc::clone(&cache);
+            async move { cache.cleanup_disk().await }
+        });
+        tokio::task::spawn_blocking(move || entered_signal.recv())
+            .await
+            .expect("wait for the eviction")
+            .expect("the trim reached its eviction");
+        trim.abort();
+        assert!(trim
+            .await
+            .expect_err("the trim task was aborted")
+            .is_cancelled());
+
+        let closing = tokio::spawn({
+            let cache = Arc::clone(&cache);
+            async move { cache.close().await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let evicted_path = cache.artifact_path(evicted).expect("artifact path");
+        assert!(
+            !closing.is_finished(),
+            "close waits for the blocked eviction"
+        );
+        assert!(evicted_path.try_exists().expect("artifact status"));
+
+        release.send(()).expect("release the eviction");
+        drop(release);
+        closing.await.expect("close");
+        assert!(
+            !evicted_path.try_exists().expect("artifact status"),
+            "the eviction ended before close returned"
+        );
+        assert_eq!(cache.snapshot().disk_evictions, 1);
+
+        let late_path = cache.artifact_path(late).expect("artifact path");
+        tokio_fs::write(&late_path, b"aa")
+            .await
+            .expect("artifact over budget");
+        cache.cleanup_disk().await.expect("cleanup after close");
+        assert!(late_path.try_exists().expect("artifact status"));
         assert_eq!(cache.snapshot().disk_evictions, 1);
     }
 
