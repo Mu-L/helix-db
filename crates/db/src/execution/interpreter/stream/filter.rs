@@ -20,9 +20,14 @@ use super::eval::RowValueResolver;
 use super::*;
 
 /// Rows evaluated per stored-record batch. This bounds the decoded records a
-/// filter holds at once while amortizing one multi-get over many rows. Index
+/// filter holds at once while amortizing one multi-get over many rows, and
+/// sizes the multi-get batches of every row-preserving filter. Index
 /// membership also resolves its bitmaps only for streams with more node rows.
-pub(super) const RECORD_BATCH_ROWS: usize = 256;
+///
+/// The planner prices index membership by this same threshold, so the value
+/// comes from `helix_planner::cost::RECORD_BATCH_ROWS`; changing it changes
+/// pricing and execution together.
+pub(super) const RECORD_BATCH_ROWS: usize = helix_planner::cost::RECORD_BATCH_ROWS as usize;
 
 /// Decision for one row of a row-preserving filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
