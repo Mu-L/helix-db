@@ -162,7 +162,11 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .assert()
             .success(),
     );
-    assert!(status.contains("dev (local)"));
+    let dev = status
+        .lines()
+        .find(|line| line.starts_with("dev "))
+        .unwrap_or_default();
+    assert!(dev.contains("local"), "{status}");
     assert!(status.contains(&format!("localhost:{port}")));
 
     let initial_query = stdout(

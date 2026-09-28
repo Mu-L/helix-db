@@ -61,7 +61,7 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
             .success(),
     );
     assert!(status.contains("Up 1 minute"));
-    assert!(status.contains("storage: disk"));
+    assert!(status.contains("(disk)"), "{status}");
     assert!(status.contains(&server.address().port().to_string()));
 
     fixture

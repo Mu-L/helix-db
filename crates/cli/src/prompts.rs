@@ -17,12 +17,6 @@ enum ProjectDirectoryChoice {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StatusSelection {
-    All,
-    Instance(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PruneSelection {
     All,
     Instance(String),
@@ -235,28 +229,6 @@ pub fn select_instance(instances: &[(String, String)], prompt: &str) -> Result<S
         select = select.item(name.clone(), name.as_str(), hint.as_str());
     }
     Ok(select.interact()?)
-}
-
-pub fn select_status(instances: &[(String, String)]) -> Result<StatusSelection> {
-    if instances.is_empty() {
-        return Ok(StatusSelection::All);
-    }
-
-    let all = "__all__".to_string();
-    let mut select = cliclack::select("Show status for which instance?").item(
-        all.clone(),
-        "All instances",
-        "Show every local and Cloud instance",
-    );
-    for (name, hint) in instances {
-        select = select.item(name.clone(), name.as_str(), hint.as_str());
-    }
-    let selected: String = select.interact()?;
-    if selected == all {
-        Ok(StatusSelection::All)
-    } else {
-        Ok(StatusSelection::Instance(selected))
-    }
 }
 
 pub fn select_prune(local_instances: &[(String, String)]) -> Result<PruneSelection> {

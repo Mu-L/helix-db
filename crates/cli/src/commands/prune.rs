@@ -44,14 +44,16 @@ async fn prune_one(project: &ProjectContext, instance: &str) -> Result<()> {
     if workspace.exists() {
         std::fs::remove_dir_all(workspace)?;
     }
-    if removed_container || removed_workspace {
+    let pruned = removed_container || removed_workspace;
+    if pruned {
         op.success();
     } else {
-        output::info(&format!(
-            "No local runtime resources found for '{instance}'"
-        ));
+        output::outro(&format!("No local runtime resources found for {instance}"));
     }
-    Ok(())
+    output::emit(
+        &serde_json::json!({"instance": instance, "pruned": pruned}),
+        |_| Ok(()),
+    )
 }
 
 fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {

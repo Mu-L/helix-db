@@ -274,7 +274,6 @@ database = "cluster:cluster-1"
             .args([
                 "logs",
                 "production",
-                "--range",
                 "--start",
                 "2026-01-01T00:00:00Z",
                 "--end",
@@ -283,7 +282,14 @@ database = "cluster:cluster-1"
             .assert()
             .success(),
     );
-    assert!(logs.contains("read: failed"));
+    let row = logs
+        .lines()
+        .find(|line| line.contains("read"))
+        .unwrap_or_default();
+    assert!(
+        row.contains("2026-01-01T00:30:00Z") && row.contains("failed"),
+        "{logs}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

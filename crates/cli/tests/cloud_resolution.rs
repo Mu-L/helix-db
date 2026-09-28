@@ -494,3 +494,103 @@ async fn shared_clusters_are_not_databases() {
         .failure();
     assert!(stderr(&assert).contains("is shared, so it is not a database"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn status_reports_an_unreachable_cloud_database_without_failing() {
+    let (server, fixture) = cloud().await;
+    get(
+        &server,
+        "/v1/tenants/t-1",
+        json!({"id":"t-1","name":"App","status":"RESOURCE_STATUS_ACTIVE"}),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/tenants/t-2"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({"message":"backend down"})))
+        .mount(&server)
+        .await;
+    let dir = write_project(
+        &fixture,
+        "status",
+        "[project]\nname = \"status\"\n\n[enterprise.production]\ndatabase = \"tenant:t-1\"\n\n[enterprise.staging]\ndatabase = \"tenant:t-2\"\n",
+    );
+
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .arg("status")
+        .assert()
+        .success();
+    let table = stdout(&assert);
+    let production = table
+        .lines()
+        .find(|line| line.starts_with("production"))
+        .unwrap();
+    assert!(
+        production.contains("active") && production.contains("App"),
+        "{table}"
+    );
+    let staging = table
+        .lines()
+        .find(|line| line.starts_with("staging"))
+        .unwrap();
+    assert!(staging.contains("unreachable"), "{table}");
+    assert!(
+        stderr(&assert).contains("staging:"),
+        "the cause is reported as a warning"
+    );
+
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .args(["status", "--json"])
+        .assert()
+        .success();
+    let report: Value = serde_json::from_str(&stdout(&assert)).unwrap();
+    assert_eq!(report["project"], "status");
+    let instances = report["instances"].as_array().unwrap();
+    assert_eq!(instances[0]["kind"], "cloud");
+    assert_eq!(instances[0]["state"], "active");
+    assert_eq!(instances[1]["state"], "unreachable");
+    assert!(instances[1]["error"].as_str().unwrap().contains("503"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cloud_logs_say_when_there_is_nothing_to_show() {
+    let (server, fixture) = cloud().await;
+    get(
+        &server,
+        "/v1/tenants/t-1/query-errors",
+        json!({"errors":[]}),
+    )
+    .await;
+    let dir = write_project(
+        &fixture,
+        "quiet-logs",
+        "[project]\nname = \"quiet-logs\"\n\n[enterprise.production]\ndatabase = \"tenant:t-1\"\n",
+    );
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .arg("logs")
+        .assert()
+        .success();
+    assert_eq!(stdout(&assert), "");
+    assert!(stderr(&assert).contains("No query errors on production"));
+
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .args(["logs", "--json"])
+        .assert()
+        .success();
+    assert_eq!(stdout(&assert), "[]\n");
+
+    let assert = fixture
+        .command()
+        .current_dir(&dir)
+        .args(["logs", "--start", "yesterday"])
+        .assert()
+        .failure();
+    assert!(stderr(&assert).contains("RFC 3339"));
+}

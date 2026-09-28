@@ -366,7 +366,11 @@ fn local_runtime_commands_have_cross_platform_no_daemon_smoke_coverage() {
             .assert()
             .success(),
     );
-    assert!(status.contains("dev (local)"));
+    let dev = status
+        .lines()
+        .find(|line| line.starts_with("dev "))
+        .unwrap_or_default();
+    assert!(dev.contains("local"), "{status}");
     assert!(status.contains("not created"));
 
     let logs = stdout(
@@ -475,8 +479,8 @@ fn project_and_metrics_commands_use_isolated_state() {
             .assert()
             .success(),
     );
-    assert!(metrics_status.contains("Metrics Level"));
-    assert!(metrics_status.contains("Off"));
+    assert!(metrics_status.contains("Level"), "{metrics_status}");
+    assert!(metrics_status.contains("off"), "{metrics_status}");
 }
 
 #[test]

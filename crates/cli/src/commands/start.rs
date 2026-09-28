@@ -2,7 +2,6 @@ use crate::config::{InstanceInfo, LocalInstanceConfig, LocalStorageMode, S3Stora
 use crate::local_runtime::LocalRuntime;
 use crate::output::{self, Operation};
 use crate::project::ProjectContext;
-use crate::prompts;
 use eyre::{eyre, Result};
 
 pub async fn run(
@@ -16,9 +15,9 @@ pub async fn run(
 ) -> Result<()> {
     let mut project = ProjectContext::find_and_load(None)?;
     let _ = dotenvy::from_path(project.root.join(".env"));
-    let instance = resolve_local_instance(&project, instance)?;
+    let instance = project.resolve_local_instance(instance, "Start which local instance?")?;
     let InstanceInfo::Local(config) = project.config.get_instance(&instance)? else {
-        return Err(eyre!("'{instance}' is not a local instance"));
+        unreachable!("resolve_local_instance only returns local instances");
     };
     let mut config = config.clone();
     if let Some(port) = port {
@@ -131,31 +130,4 @@ fn warn_about_storage(project: &ProjectContext, instance: &str, config: &LocalIn
         "Local HelixDB uses in-memory storage. Stopping or restarting wipes local data.",
     );
     let _ = std::fs::write(&marker, b"");
-}
-
-fn resolve_local_instance(project: &ProjectContext, instance: Option<String>) -> Result<String> {
-    if let Some(instance) = instance {
-        return Ok(instance);
-    }
-    if prompts::is_interactive() && project.config.local.len() > 1 {
-        return prompts::select_instance(&local_instances(project), "Run which local instance?");
-    }
-    if project.config.local.contains_key("dev") {
-        return Ok("dev".to_string());
-    }
-    if project.config.local.len() == 1 {
-        return Ok(project.config.local.keys().next().unwrap().clone());
-    }
-    Err(eyre!("No local instance specified"))
-}
-
-fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {
-    let mut instances: Vec<(String, String)> = project
-        .config
-        .local
-        .iter()
-        .map(|(name, config)| (name.clone(), format!("http://localhost:{}", config.port)))
-        .collect();
-    instances.sort_by(|a, b| a.0.cmp(&b.0));
-    instances
 }

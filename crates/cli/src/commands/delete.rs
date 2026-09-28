@@ -48,5 +48,5 @@ pub async fn run(instance: String, yes: bool) -> Result<()> {
     }
 
     op.success();
-    Ok(())
+    output::emit(&serde_json::json!({"deleted": instance}), |_| Ok(()))
 }

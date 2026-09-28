@@ -139,17 +139,14 @@ enum Commands {
     Logs {
         /// Instance name
         instance: Option<String>,
-        /// Follow logs
+        /// Stream new log lines (local instances)
         #[arg(long, short = 'f')]
         follow: bool,
-        /// Query historical logs with a time range (Helix Cloud)
-        #[arg(long, short = 'r')]
-        range: bool,
-        /// Start time (RFC 3339, e.g. 2026-01-02T15:04:05Z)
-        #[arg(long, requires = "range")]
+        /// Start of the Cloud query-error window (RFC 3339); defaults to an hour before --end
+        #[arg(long)]
         start: Option<String>,
-        /// End time (RFC 3339, e.g. 2026-01-02T15:04:05Z)
-        #[arg(long, requires = "range")]
+        /// End of the Cloud query-error window (RFC 3339); defaults to now
+        #[arg(long)]
         end: Option<String>,
     },
 
@@ -617,10 +614,9 @@ async fn main() -> Result<()> {
         Some(Commands::Logs {
             instance,
             follow,
-            range,
             start,
             end,
-        }) => commands::logs::run(instance, follow, range, start, end).await,
+        }) => commands::logs::run(instance, follow, start, end).await,
         Some(Commands::Query {
             instance,
             file,

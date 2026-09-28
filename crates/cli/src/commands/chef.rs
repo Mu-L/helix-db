@@ -979,6 +979,7 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
     let run_id = new_chef_run_id();
     let started_at = Instant::now();
 
+    crate::output::intro("Helix chef");
     let options = collect_options()?;
     let has_custom_intent = has_custom_intent(options.build_intent.as_deref());
     metrics_sender.send_chef_event(chef_metric(
@@ -1053,6 +1054,11 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
         None,
     ));
 
+    crate::output::outro(if success {
+        "Chef is done"
+    } else {
+        "Chef set up the project; finish with your coding agent"
+    });
     Ok(())
 }
 

@@ -72,14 +72,6 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
-pub fn print_header(title: &str) {
-    println!("{}", console::style(title).bold().underlined());
-}
-
-pub fn print_field(key: &str, value: &str) {
-    println!("  {}: {value}", console::style(key).bold());
-}
-
 pub fn add_env_var_to_file(path: &std::path::Path, key: &str, value: &str) -> Result<()> {
     let mut content = std::fs::read_to_string(path).unwrap_or_default();
     let replacement = format!("{key}={value}");
