@@ -796,6 +796,12 @@ struct HelixDBInner {
     query_metrics: RwLock<Option<OssQueryMetrics>>,
     query_metrics_runtime: Mutex<Option<telemetry::Runtime>>,
     close_state: Mutex<CloseState>,
+    /// Index membership sets resolved from secondary indexes by any request.
+    ///
+    /// The per-row fallback keeps exactly the same rows, so only this count
+    /// tells tests that a request really read a set.
+    #[cfg(test)]
+    resolved_index_memberships: std::sync::atomic::AtomicUsize,
 }
 
 /// Non-forgeable evidence that planning observed one exact runtime catalog.
@@ -1544,6 +1550,8 @@ impl HelixDB {
                 query_metrics: RwLock::new(None),
                 query_metrics_runtime: Mutex::new(None),
                 close_state: Mutex::new(CloseState::Open),
+                #[cfg(test)]
+                resolved_index_memberships: std::sync::atomic::AtomicUsize::new(0),
                 config,
             }),
         }
