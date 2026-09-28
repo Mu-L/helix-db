@@ -36,6 +36,7 @@ impl ExecutableDagBuilder<'_> {
                 delivered: filtered_delivered_properties(delivered),
                 // Lowering has no statistics; selection already priced the set.
                 cost: self.profile.index_membership_filter(
+                    plan.predicate().as_ref(),
                     self.profile
                         .bitmap_equality_lookup(self.profile.default_equality_index_rows),
                     match plan.outside_label() {
