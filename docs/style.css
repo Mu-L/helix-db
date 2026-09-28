@@ -391,3 +391,11 @@ h5 {
     font-feature-settings: "liga" 0, "calt" 0 !important;
     font-variant-ligatures: none !important;
 }
+
+/* Learn: tile grid and learning-objectives box use normal body text, not the
+   uppercase monospace card style used elsewhere. */
+.learn-tiles .card span,
+.learn-objectives .card span {
+    text-transform: none;
+    font-family: inherit;
+}

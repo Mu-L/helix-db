@@ -17,6 +17,9 @@ const PAGE_TYPES = new Set([
   "Troubleshooting",
 ]);
 const MATURITY_STATUSES = new Set(["Preview", "Beta", "Deprecated"]);
+// Tile-grid landing pages render no body text before their cards, so they carry
+// pageType metadata without a rendered badge.
+const LANDING_PAGES = new Set(["learn/index"]);
 const CORE_MULTI_SDK_PAGES = [
   "database/helix-db/core-concepts/overview",
   "database/helix-db/query-guides/reading-data",
@@ -47,7 +50,7 @@ const DATABASE_GROUP_PREFIXES = new Map([
   ["Learn/Graph databases", "learn/graph-databases/"],
   ["Learn/Vector search", "learn/vector-search/"],
   ["Learn/Full-text search", "learn/full-text-search/"],
-  ["Learn/AI memory", "learn/ai-memory/"],
+  ["Learn/AI memory and RAG", "learn/ai-memory/"],
   ["Learn/Database architecture", "learn/database-architecture/"],
 ]);
 const CLIENT_SETUP_MARKER = "{/* client-setup: no JSON representation */}";
@@ -236,6 +239,7 @@ for (const slug of navigable) {
 
   const body = content.slice(match[0].length);
   const bodyLines = body.split("\n").filter((line) => line.trim().length > 0);
+  if (LANDING_PAGES.has(slug)) continue;
   if (pageType !== null) {
     if (countBadge(body, pageType) !== 1) {
       errors.push(
@@ -254,6 +258,25 @@ for (const slug of navigable) {
       errors.push(
         `${slug}: rendered ${maturity} badge does not match frontmatter`,
       );
+    }
+  }
+  if (slug.startsWith("learn/")) {
+    if (!body.includes('<div className="learn-objectives">')) {
+      errors.push(`${slug}: Learn page is missing the learning-objectives block`);
+    }
+    for (const section of ["Frequently asked questions", "Related topics"]) {
+      if (!body.includes(`\n## ${section}\n`)) {
+        errors.push(`${slug}: Learn page is missing ## ${section}`);
+      }
+    }
+    for (const [, heading] of body.matchAll(/^## (.+)$/gm)) {
+      const fixed = heading === "Frequently asked questions" || heading === "Related topics";
+      if (!fixed && !heading.trim().endsWith("?")) {
+        errors.push(`${slug}: Learn section heading is not a question: ${heading}`);
+      }
+    }
+    if (body.includes("<Accordion")) {
+      errors.push(`${slug}: Learn FAQs use visible ### questions, not accordions`);
     }
   }
   if (status !== null) {

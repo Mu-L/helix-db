@@ -76,6 +76,12 @@ function loadPage(slug) {
         '',
       );
       markdown = markdown.replace(/^<\/?[A-Z][A-Za-z0-9]*\b[^>]*>\s*$/gm, '');
+      // Layout wrappers and the rendered page-type badge; the page type is
+      // already written as plain-text metadata above the body.
+      markdown = markdown.replace(
+        /^\s*<\/?div\b[^>]*>(?:<Badge\b[^>]*>[^<]*<\/Badge>)*(?:<\/div>)?\s*$/gm,
+        '',
+      );
       return markdown;
     })
     .join('');

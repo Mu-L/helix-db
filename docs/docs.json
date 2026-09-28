@@ -284,14 +284,17 @@
               "learn/graph-databases/what-is-a-graph-database",
               "learn/graph-databases/graph-vs-relational-database",
               "learn/graph-databases/what-is-a-knowledge-graph",
-              "learn/graph-databases/what-is-a-property-graph"
+              "learn/graph-databases/what-is-a-property-graph",
+              "learn/graph-databases/property-graph-vs-rdf"
             ]
           },
           {
             "group": "Vector search",
             "pages": [
               "learn/vector-search/what-is-vector-search",
+              "learn/vector-search/what-are-vector-embeddings",
               "learn/vector-search/what-is-a-vector-database",
+              "learn/vector-search/what-is-hnsw",
               "learn/vector-search/filtered-vector-search",
               "learn/vector-search/vector-distance-metrics"
             ]
@@ -305,11 +308,12 @@
             ]
           },
           {
-            "group": "AI memory",
+            "group": "AI memory and RAG",
             "pages": [
+              "learn/ai-memory/what-is-rag",
+              "learn/ai-memory/what-is-graphrag",
               "learn/ai-memory/what-is-ai-agent-memory",
-              "learn/ai-memory/long-term-memory-for-ai-agents",
-              "learn/ai-memory/what-is-graphrag"
+              "learn/ai-memory/long-term-memory-for-ai-agents"
             ]
           },
           {
@@ -1015,7 +1019,7 @@
     },
     {
       "source": "/embeddings",
-      "destination": "/learn/vector-search/what-is-vector-search"
+      "destination": "/learn/vector-search/what-are-vector-embeddings"
     },
     {
       "source": "/semantic-search",
@@ -1424,6 +1428,42 @@
     {
       "source": "/multi-model-database",
       "destination": "/learn/database-architecture/one-database-for-graph-vector-and-text"
+    },
+    {
+      "source": "/vector-embeddings",
+      "destination": "/learn/vector-search/what-are-vector-embeddings"
+    },
+    {
+      "source": "/what-are-embeddings",
+      "destination": "/learn/vector-search/what-are-vector-embeddings"
+    },
+    {
+      "source": "/hnsw",
+      "destination": "/learn/vector-search/what-is-hnsw"
+    },
+    {
+      "source": "/ann-index",
+      "destination": "/learn/vector-search/what-is-hnsw"
+    },
+    {
+      "source": "/rdf",
+      "destination": "/learn/graph-databases/property-graph-vs-rdf"
+    },
+    {
+      "source": "/property-graph-vs-rdf",
+      "destination": "/learn/graph-databases/property-graph-vs-rdf"
+    },
+    {
+      "source": "/rag",
+      "destination": "/learn/ai-memory/what-is-rag"
+    },
+    {
+      "source": "/retrieval-augmented-generation",
+      "destination": "/learn/ai-memory/what-is-rag"
+    },
+    {
+      "source": "/what-is-rag",
+      "destination": "/learn/ai-memory/what-is-rag"
     }
   ],
   "search": {

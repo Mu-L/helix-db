@@ -56,15 +56,20 @@ users also need it. Link to it from Cloud pages instead of duplicating it.
 Learn pages target the questions people ask search engines and AI assistants, so their
 structure is fixed:
 
-- Title the page with the question, and answer it completely in the first two or three
-  sentences.
+- One main topic per page, named by a question in the title. A neighboring concept gets
+  2-4 sentences and a link to its own page, not an in-depth section.
+- Answer the title question completely in the first two or three sentences, then add the
+  learning-objectives block (`<div className="learn-objectives">` wrapping a `Card` titled
+  "Learning objectives").
+- Phrase every `##` section as a question, with the answer directly below it. The right-hand
+  "On this page" list then reads as the questions the page answers.
 - Teach the concept vendor-neutrally. Do not name or characterize other vendors.
-- Keep HelixDB to one `## How HelixDB ...` section near the end, stating only facts the
+- Keep HelixDB to one `## How does HelixDB ...?` section near the end, stating only facts the
   product docs already support, and link to the guides.
-- End with `## Frequently asked questions` (question-phrased `###` headings) and
-  `## Related topics`.
-- Link each new Learn page from the related guide, and add shortcut redirects for its
-  obvious names.
+- End with `## Frequently asked questions` (question-phrased `###` headings with visible
+  answers, not accordions) and `## Related topics`.
+- Add every new page as a question link on the `/learn` tile page, link it from the related
+  guide, and add shortcut redirects for its obvious names.
 
 ## Local checks
 
