@@ -82,7 +82,7 @@ pub(in crate::rules) fn stream_pipeline_op_contract(
                         stats,
                         storage,
                     ),
-                    rows,
+                    cost::MembershipStream::new(rows, upper),
                 ),
             )
         }

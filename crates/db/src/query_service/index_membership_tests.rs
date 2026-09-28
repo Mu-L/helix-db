@@ -294,9 +294,12 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
             false,
         ),
     ] {
-        // Without statistics an unscoped predicate cannot prove which label
-        // the expansion reaches, so it keeps the per-row filter; scoped to
-        // `Attribute` it plans membership whenever an index answers it.
+        // `Group.uid` and `Item.uid` are not indexed, so both sources are
+        // label scans that keep the unknown-scan estimate without statistics,
+        // past one record batch. Unscoped or scoped to `Attribute`, the
+        // predicate plans membership whenever an index answers it; the
+        // unscoped one still evaluates `Note` rows per row after the wide
+        // stream resolves its set.
         let attributes = |uids: &[&'static str]| {
             uids.iter()
                 .copied()
@@ -308,7 +311,7 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
                 unscoped.clone(),
                 narrow_uids.clone(),
                 wide_uids.clone(),
-                false,
+                answered,
             ),
             (
                 attribute(unscoped),
@@ -543,6 +546,135 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
         assert_eq!(uids(&rows), expected, "{item} {kind}");
         let counted = execute(planning::plan_read_batch(&count, &item_statistics).unwrap()).await;
         assert_eq!(counted, serde_json::json!(expected.len()));
+    }
+    assert_eq!(resolved(&unindexed), 0);
+    indexed.close().await.unwrap();
+    unindexed.close().await.unwrap();
+}
+
+#[test]
+fn point_source_membership_matches_the_per_row_filter() {
+    // Pull-cursor counts need more stack than a default test thread in
+    // debug builds.
+    std::thread::Builder::new()
+        .name("point-source-membership".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("point source membership runtime builds")
+                .block_on(point_source_membership_matches_the_per_row_filter_contract());
+        })
+        .expect("point source membership thread starts")
+        .join()
+        .expect("point source membership thread completes");
+}
+
+async fn point_source_membership_matches_the_per_row_filter_contract() {
+    let scope = DataScope::LegacyUnscoped;
+    let indexed = seeded("membership-point-indexed", scope, true).await;
+    // Indexed `uid`s make both sources point reads, as in the benchmark, so
+    // every stream behind them is an unbounded estimate within one batch.
+    for label in ["Group", "Item"] {
+        create_index(
+            &indexed,
+            scope,
+            index::IndexSpec::node_equality(label, "uid"),
+        )
+        .await;
+    }
+    let unindexed = seeded("membership-point-unindexed", scope, false).await;
+    // `iw`'s targets, bounced out, in, and out again.
+    let hub_targets = || {
+        traversal::g()
+            .n_with_label_where("Item", expr::Predicate::eq("uid", "iw"))
+            .out(Some("HAS_ATTRIBUTE"))
+            .in_(Some("HAS_ATTRIBUTE"))
+            .out(Some("HAS_ATTRIBUTE"))
+    };
+    let kind_b = expr::Predicate::eq("kind", "B");
+    for (predicate, narrow_uids, wide_uids) in [
+        (
+            kind_b.clone(),
+            vec!["a1", "a1", "n1"],
+            vec!["aw0", "nw3", "aw6", "nw9", "aw12", "nw15"],
+        ),
+        (
+            attribute(kind_b),
+            vec!["a1", "a1"],
+            vec!["aw0", "aw6", "aw12"],
+        ),
+    ] {
+        let wide_rows = repeated(&wide_uids, WIDE.len());
+        // Both streams plan membership; only the wide one outgrows one
+        // record batch and reads the set.
+        for (read, expected, resolves) in [
+            (read_result(narrow(predicate.clone())), narrow_uids, 0),
+            (read_result(wide(predicate.clone())), wide_rows.clone(), 1),
+        ] {
+            assert_eq!(
+                membership_steps(&plan(&indexed, &read, scope).await),
+                1,
+                "{predicate:?}"
+            );
+            let before = resolved(&indexed);
+            let membership = indexed
+                .query(query::QueryRequest::read(read.clone()))
+                .await
+                .unwrap();
+            assert_eq!(resolved(&indexed) - before, resolves, "{predicate:?}");
+            let per_row = unindexed
+                .query(query::QueryRequest::read(read.clone()))
+                .await
+                .unwrap();
+            assert_eq!(uids(&membership["result"]), expected, "{predicate:?}");
+            assert_eq!(uids(&per_row["result"]), expected, "{predicate:?}");
+        }
+
+        // The count cursor evaluates its first batch row by row, then reads
+        // the set for the rest of the stream.
+        let count = read_result(hub_targets().where_(predicate.clone()).count());
+        let before = resolved(&indexed);
+        let membership = indexed
+            .query(query::QueryRequest::read(count.clone()))
+            .await
+            .unwrap();
+        assert_eq!(resolved(&indexed) - before, 1, "{predicate:?}");
+        let per_row = unindexed
+            .query(query::QueryRequest::read(count))
+            .await
+            .unwrap();
+        assert_eq!(membership["result"], per_row["result"], "{predicate:?}");
+        assert_eq!(
+            membership["result"].as_u64(),
+            u64::try_from(wide_rows.len()).ok(),
+            "{predicate:?}"
+        );
+
+        // A limit before the filter proves the stream fits in one batch.
+        let limited = read_result(
+            hub_targets()
+                .limit(2_usize)
+                .where_(predicate.clone())
+                .values(vec!["uid"]),
+        );
+        assert_eq!(membership_steps(&plan(&indexed, &limited, scope).await), 0);
+        let before = resolved(&indexed);
+        let membership = indexed
+            .query(query::QueryRequest::read(limited.clone()))
+            .await
+            .unwrap();
+        assert_eq!(resolved(&indexed) - before, 0, "{predicate:?}");
+        let per_row = unindexed
+            .query(query::QueryRequest::read(limited))
+            .await
+            .unwrap();
+        assert_eq!(
+            uids(&membership["result"]),
+            uids(&per_row["result"]),
+            "{predicate:?}"
+        );
     }
     assert_eq!(resolved(&unindexed), 0);
     indexed.close().await.unwrap();
