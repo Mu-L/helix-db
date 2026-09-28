@@ -63,6 +63,10 @@ impl<'db> ExecutionContext<'db> {
     /// Range scans verify every in-range record of the label with its own
     /// authoritative read, and runtime bounds may have no range encoding at
     /// all, so any set with a range scan returns `false` as well.
+    ///
+    /// An unbound runtime parameter also returns `false`: the per-row filter
+    /// reads a parameter only for rows that reach it, so the request must fail
+    /// only when such a row exists, not when the set is resolved up front.
     pub(in crate::execution::interpreter) fn node_secondary_set_is_index_served(
         &self,
         set: &exec::ExecNodeSecondarySetPlan,
@@ -76,18 +80,24 @@ impl<'db> ExecutionContext<'db> {
             | exec::ExecNodeSecondarySetPlan::Range(_)
             | exec::ExecNodeSecondarySetPlan::OrderedIntersect { .. } => Ok(false),
             exec::ExecNodeSecondarySetPlan::DynamicEquality { param, .. } => {
-                let value =
-                    self.index_value(&helix_planner::ir::IndexValue::Param(param.clone()))?;
+                let Ok(value) = self.param_value(param) else {
+                    return Ok(false);
+                };
                 Ok(matches!(
                     equality_index_value::project_equality_value(&value),
                     equality_index_value::EqualityValueProjection::Indexed(_)
                         | equality_index_value::EqualityValueProjection::NonReflexive
                 ))
             }
-            exec::ExecNodeSecondarySetPlan::DynamicMembership { values, .. } => Ok(matches!(
-                self.runtime_equality_domain(values)?,
-                super::membership::RuntimeEqualityDomain::Indexed(_)
-            )),
+            exec::ExecNodeSecondarySetPlan::DynamicMembership { values, .. } => {
+                let Ok(domain) = self.runtime_equality_domain(values) else {
+                    return Ok(false);
+                };
+                Ok(matches!(
+                    domain,
+                    super::membership::RuntimeEqualityDomain::Indexed(_)
+                ))
+            }
             exec::ExecNodeSecondarySetPlan::Intersect { driver, rest }
             | exec::ExecNodeSecondarySetPlan::Union { driver, rest } => {
                 core::iter::once(driver.as_ref())

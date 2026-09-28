@@ -543,6 +543,50 @@ async fn runtime_parameters_needing_authoritative_scans_fall_back_to_rows() {
 }
 
 #[tokio::test]
+async fn unbound_parameters_fail_only_when_a_row_reads_them() {
+    let fixture = fixture("membership-unbound-params").await;
+    // Past one record batch of node rows, none of them `Attribute`: the
+    // per-row filter rejects every row on `$label` and never reads `$kind`.
+    let rows = [fixture.note_b, fixture.note_a, fixture.group]
+        .into_iter()
+        .cycle()
+        .take(RECORD_BATCH_ROWS + 1)
+        .map(|id| ExecutionRow::current(ElementRef::Node(id)))
+        .collect::<Vec<_>>();
+    let scoped = |predicate: Predicate| {
+        Predicate::and(vec![Predicate::eq("$label", "Attribute"), predicate])
+    };
+    let sets = [
+        (
+            kind_equality(ir::IndexValue::Param(name("kind"))),
+            scoped(Predicate::eq_param("kind", "kind")),
+        ),
+        (
+            kind_equality(ir::IndexValue::ParamSet(ir::RuntimeEqualitySet::new(
+                name("kinds"),
+                std::num::NonZeroUsize::new(2).unwrap(),
+            ))),
+            scoped(Predicate::is_in_param("kind", "kinds")),
+        ),
+    ];
+    for (set, predicate) in sets {
+        let before = resolved(&fixture.db);
+        let (kept, _) = assert_matches_filter(
+            &fixture,
+            &membership(set, predicate.clone()),
+            predicate,
+            rows.clone(),
+            context::ParamBindings::default(),
+        )
+        .await;
+        assert!(kept.is_empty());
+        // The unbound parameter left the set unresolved: every row was decided
+        // by the per-row filter, which never read the parameter.
+        assert_eq!(resolved(&fixture.db), before);
+    }
+}
+
+#[tokio::test]
 async fn unavailable_indexes_fall_back_and_corrupt_identities_fail_closed() {
     let fixture = fixture("membership-unavailable-index").await;
     let key = catalog::ScopedPropertyKey::try_new("Attribute", "color").unwrap();
