@@ -6,6 +6,8 @@ The v3 CLI manages local Helix instances and WorkOS-session-authenticated Helix 
 - Cloud discovery/resources: `workspace`, `project`, `cluster`, `database`, `service-credential`, `api`.
 - Cloud queries: `query` and `shell` execute through the backend query broker.
 - Authentication: `auth login|status|logout` stores only a rotating WorkOS session.
+- Output: results go to stdout and progress to stderr; the global `--json` flag prints the result as JSON and never prompts.
+- Cloud arguments accept an ID, slug, or name and default to the project and databases linked in `helix.toml`.
 
 The Cloud CLI accepts no API-key login, service-credential login, direct gateway path, or custom
 query authorization. Tenant creation returns a default read-write application key once for direct
@@ -39,12 +41,23 @@ pull = "missing"
 Flags override configuration. Without a configured policy, `latest` pulls on
 every start and other tags/digests pull only when absent. `--pull always` requires
 a successful pull, `--pull missing` permits cached images, and `--pull never`
-requires cached images. Explicit pull policies also apply to disk-mode MinIO
-images; their default is `missing`.
+requires cached images. Explicit pull policies also apply to the disk-mode
+SeaweedFS image; its default is `missing`.
 
 Start resolves all required images before saving overrides or replacing containers.
-A failed image resolution leaves `helix.toml` unchanged. Helix, MinIO, and the
-bucket initializer start by their resolved immutable image IDs.
+A failed image resolution leaves `helix.toml` unchanged. Helix and SeaweedFS
+start by their resolved immutable image IDs.
+
+Disk mode runs SeaweedFS (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest)
+as a private S3 sidecar with the `helix-db` bucket, stored in the
+`helix-<project>-<instance>-seaweedfs-data` volume. Releases before the switch
+used MinIO, whose images are no longer published. On `start`, `stop`, and
+`prune` the CLI removes an old `-minio` sidecar. `start` and `stop` keep the
+unreadable `-minio-data` volume and `start` warns while it exists; remove it
+with `docker volume rm` (or `podman volume rm`) once migrated, because
+`helix prune` also deletes the new SeaweedFS volume. See the
+[local workflow guide](https://docs.helix-db.com/cli/workflows/local#migrate-minio-disk-data)
+to copy that data.
 `helix restart dev` restarts the existing container with its existing image and
 settings and checks readiness on the container's published port. It fails if no container exists. Use `helix start dev` to apply new
 image or configuration settings. Restarting in-memory storage clears its data.

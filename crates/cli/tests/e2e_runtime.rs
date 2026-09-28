@@ -63,6 +63,10 @@ fn stdout(assert: Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).expect("stdout should be utf8")
 }
 
+fn stderr(assert: Assert) -> String {
+    String::from_utf8(assert.get_output().stderr.clone()).expect("stderr should be utf8")
+}
+
 struct RuntimeCleanup<'a> {
     fixture: &'a CliFixture,
     project: PathBuf,
@@ -158,20 +162,18 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .assert()
             .success(),
     );
-    assert!(status.contains("dev (local)"));
+    let dev = status
+        .lines()
+        .find(|line| line.starts_with("dev "))
+        .unwrap_or_default();
+    assert!(dev.contains("local"), "{status}");
     assert!(status.contains(&format!("localhost:{port}")));
 
     let initial_query = stdout(
         fixture
             .command()
             .current_dir(&project)
-            .args([
-                "query",
-                "dev",
-                "--file",
-                "examples/request.json",
-                "--compact",
-            ])
+            .args(["query", "dev", "--file", "examples/request.json", "--json"])
             .assert()
             .success(),
     );
@@ -185,7 +187,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
         .current_dir(&project)
         .args(["query", "dev", "--file"])
         .arg(&write_request)
-        .arg("--compact")
+        .arg("--json")
         .assert()
         .success();
 
@@ -198,7 +200,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -241,7 +243,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
 }
 
 #[test]
-#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.6 plus MinIO"]
+#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.6 plus SeaweedFS"]
 fn disk_runtime_persists_data_across_stop_and_start() {
     let fixture = CliFixture::new();
     let port = free_port();
@@ -283,7 +285,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
         .current_dir(&project)
         .args(["query", "dev", "--file"])
         .arg(&write_request)
-        .arg("--compact")
+        .arg("--json")
         .assert()
         .success();
     // A restart must retain the image even when project settings now name an
@@ -305,7 +307,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -331,7 +333,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -343,6 +345,102 @@ fn disk_runtime_persists_data_across_stop_and_start() {
         .args(["prune", "dev", "--yes"])
         .assert()
         .success();
+}
+
+fn docker(args: &[&str]) -> std::process::Output {
+    std::process::Command::new("docker")
+        .args(args)
+        .output()
+        .expect("run docker")
+}
+
+/// Upgrading from a MinIO-based CLI leaves its sidecar attached to the
+/// instance network and its data volume behind. Start must detach the old
+/// sidecar so stop can still remove the network, and prune must delete both.
+#[test]
+#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.6 plus SeaweedFS"]
+fn disk_runtime_replaces_a_legacy_minio_sidecar() {
+    let fixture = CliFixture::new();
+    let port = free_port();
+    let name = format!("legacy-minio-{}-{port}", std::process::id());
+    let project = fixture.root().join(&name);
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--name", "dev", "--port"])
+        .arg(port.to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+    select_test_image(&project);
+    cleanup_runtime(&fixture, &project);
+    let _cleanup = RuntimeCleanup {
+        fixture: &fixture,
+        project: project.clone(),
+    };
+
+    // Stand-in for the old sidecar: any long-running container on the network.
+    let base = format!("helix-{name}-dev");
+    let (legacy_container, legacy_volume) = (format!("{base}-minio"), format!("{base}-minio-data"));
+    for args in [
+        vec!["network", "create", &format!("{base}-net")],
+        vec!["volume", "create", &legacy_volume],
+        vec![
+            "run", "-d", "--name", &legacy_container, "--network", &format!("{base}-net"),
+            "-v", &format!("{legacy_volume}:/data"), "--entrypoint", "sleep",
+            "ghcr.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882",
+            "600",
+        ],
+    ] {
+        let output = docker(&args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+    }
+
+    let started = stderr(
+        fixture
+            .command()
+            .current_dir(&project)
+            .args(["start", "dev"])
+            .assert()
+            .success(),
+    );
+    assert!(
+        started.contains(&format!("Volume {legacy_volume} holds data")),
+        "{started}"
+    );
+    assert!(!docker(&["container", "inspect", &legacy_container])
+        .status
+        .success());
+    assert!(docker(&["volume", "inspect", &legacy_volume])
+        .status
+        .success());
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["stop", "dev"])
+        .assert()
+        .success();
+    assert!(!docker(&["network", "inspect", &format!("{base}-net")])
+        .status
+        .success());
+    assert!(docker(&["volume", "inspect", &legacy_volume])
+        .status
+        .success());
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["prune", "dev", "--yes"])
+        .assert()
+        .success();
+    for volume in [legacy_volume, format!("{base}-seaweedfs-data")] {
+        assert!(
+            !docker(&["volume", "inspect", &volume]).status.success(),
+            "{volume}"
+        );
+    }
 }
 
 #[test]

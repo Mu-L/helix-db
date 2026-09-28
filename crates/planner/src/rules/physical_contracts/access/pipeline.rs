@@ -1,7 +1,7 @@
 use crate::{context, cost, exec, ir, logical, physical, properties};
 
 use super::super::support::{
-    access_pipeline_op, access_window_stream_contract, estimated_pipeline_rows,
+    access_pipeline_op, access_window_stream_contract, estimated_rows_after_op,
     physical_pipeline_from_first_and_rest, stream_pipeline_op_contract, with_cardinality,
 };
 use super::source::access_path_contract;
@@ -132,7 +132,7 @@ pub(in crate::rules) fn access_pipeline_physical_contract(
     let mut push_limit = exec::range_access_can_push_limit(pipeline.access());
     for op in pipeline.ops() {
         let (mut physical_op, next_delivered, mut op_cost) =
-            stream_pipeline_op_contract(op, delivered.clone(), rows, storage);
+            stream_pipeline_op_contract(op, delivered.clone(), rows, storage, stats);
         match op {
             logical::StreamPipelineOp::Order { ordering }
                 if exec::access_delivers_order(pipeline.access(), ordering)
@@ -167,7 +167,7 @@ pub(in crate::rules) fn access_pipeline_physical_contract(
         }
         rest.push(physical_op);
         delivered = next_delivered;
-        rows = estimated_pipeline_rows(&delivered, rows);
+        rows = estimated_rows_after_op(op, &delivered, rows, storage, stats);
         total_cost = total_cost.serial(op_cost);
     }
 
