@@ -411,10 +411,6 @@ fn indexed_conjunction_avoids_the_scan_cliff() {
                             crate::diagnostics::PlannerInsight::UnboundedScan(_)
                         )
                     });
-                    println!("PROBE count={count} stats={populated_stats} params={parameterized} nested={nested} unbounded={unbounded} label_scans={} equality_lookups={} estimated_us={}",
-                        diagnostics.statistics.node_accesses.label_scans,
-                        diagnostics.statistics.node_accesses.equality_index_lookups,
-                        plan.metrics().selected_cost.latency.as_micros());
                     if unbounded {
                         unbounded_cases.push((count, populated_stats, parameterized, nested));
                     }
