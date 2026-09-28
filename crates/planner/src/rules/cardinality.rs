@@ -1794,7 +1794,9 @@ fn cursor_cost(
         .serial(storage.index_membership_filter(
             storage.bitmap_equality_lookup(storage.default_equality_index_rows),
             super::membership_label_domain_cost(plan.outside_label, &plan.label, stats, storage),
-            storage.default_unknown_scan_rows,
+            // A count cursor proves no bound on its input and prices every
+            // operator at the unknown-input default.
+            cost::MembershipStream::MayExceedOneBatch(storage.default_unknown_scan_rows),
         )),
         exec::ExecCountCursorPlan::Window { input, .. } => cursor_cost(input, stats, storage),
         exec::ExecCountCursorPlan::Order { input, .. } => cursor_cost(input, stats, storage)
