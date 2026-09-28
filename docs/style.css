@@ -400,42 +400,10 @@ h5 {
     font-family: inherit;
 }
 
-/* Learn: full-width /learn home page (custom mode) with a centered hero. */
-.learn-page {
-    max-width: 88rem;
-    margin: 0 auto;
-    padding: 4rem 1.5rem 6rem;
-}
-
-.learn-hero {
-    text-align: center;
-    max-width: 44rem;
-    margin: 0 auto 3rem;
-}
-
-.learn-hero h1 {
-    font-size: 3rem;
-    line-height: 1.1;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    margin: 0 0 1rem;
-    color: #111827;
-}
-
-.dark .learn-hero h1 {
-    color: #ffffff;
-}
-
-.learn-hero p {
-    font-size: 1.125rem;
-    line-height: 1.75rem;
-    opacity: 0.75;
-    margin: 0;
-}
-
+/* Learn: tile grid on the /learn home page. */
 .learn-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
     gap: 1rem;
     align-items: stretch;
 }
@@ -486,4 +454,15 @@ h5 {
 .learn-tiles [data-component-part="card-content"] a:hover {
     text-decoration: underline;
     text-underline-offset: 2px;
+}
+
+/* Learn: hide the global external-link anchors (dashboard, status, GitHub, and
+   legacy docs) in the sidebar on Learn pages. */
+body:has(.learn-tiles, .learn-objectives) #navigation-items ul:has(> li > a.nav-anchor) {
+    display: none;
+}
+
+/* Learn: let the /learn tile grid use the full width beside the sidebar. */
+body:has(.learn-tiles) #content-container {
+    max-width: none;
 }
