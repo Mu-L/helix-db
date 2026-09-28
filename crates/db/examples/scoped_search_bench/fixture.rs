@@ -299,7 +299,9 @@ impl Backend {
 
 /// Waits until every named operation in `receipts` succeeds.
 ///
-/// Only `queued` and `running` keep waiting. Panics when an operation is
+/// An `already_active` receipt, which a rerun against the same database gets
+/// for an identical index, has no operation and counts as done. Only `queued`
+/// and `running` keep waiting. Panics when an operation is
 /// blocked or aborted, reports any other status (or none), or when `deadline`
 /// passes first. The deadline panic names the operation being waited on and
 /// the last status it reported, `null` when none of its polls answered.
@@ -314,6 +316,9 @@ pub async fn wait_for_operations(
     let waited = tokio::time::timeout(deadline, async {
         for name in names {
             last = (*name, JsonValue::Null);
+            if receipts[*name]["kind"] == "already_active" {
+                continue;
+            }
             let operation_id = receipts[*name]["operation_id"]
                 .as_str()
                 .unwrap()

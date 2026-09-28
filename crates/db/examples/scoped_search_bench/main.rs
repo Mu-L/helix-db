@@ -157,6 +157,7 @@ fn percentile(values: &[f64], percentile: usize) -> f64 {
 
 async fn run_queries(label: &str, backend: &Backend) {
     let (count, dimension) = (env_or("BENCH_QUERIES", 10), env_or("BENCH_DIM", 768));
+    assert!(count > 0, "BENCH_QUERIES must be at least 1");
     // `constant` repeats one uniform vector, far from every embedding: the
     // worst case for graph-guided search and a common synthetic benchmark input.
     let vectors = match std::env::var("BENCH_QUERY").as_deref() {
