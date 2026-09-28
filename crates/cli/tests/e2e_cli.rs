@@ -379,7 +379,7 @@ fn local_runtime_commands_have_cross_platform_no_daemon_smoke_coverage() {
     );
     assert!(logs.contains("fake logs"));
 
-    let stop = stdout(
+    let stop = stderr(
         fixture
             .command()
             .current_dir(&project)
@@ -389,7 +389,7 @@ fn local_runtime_commands_have_cross_platform_no_daemon_smoke_coverage() {
     );
     assert!(stop.contains("was not running"));
 
-    let prune = stdout(
+    let prune = stderr(
         fixture
             .command()
             .current_dir(&project)
@@ -417,7 +417,7 @@ database = "cluster:cluster-test"
             .assert()
             .failure(),
     );
-    assert!(start_cloud.contains("'production' is not a local v2 instance"));
+    assert!(start_cloud.contains("'production' is not a local instance"));
 
     let restart_cloud = stderr(
         fixture
@@ -427,7 +427,7 @@ database = "cluster:cluster-test"
             .assert()
             .failure(),
     );
-    assert!(restart_cloud.contains("'production' is not a local v2 instance"));
+    assert!(restart_cloud.contains("'production' is not a local instance"));
 
     fixture
         .command()
@@ -496,7 +496,7 @@ fn query_preflight_errors_do_not_need_running_runtime() {
         fixture
             .command()
             .current_dir(&project)
-            .args(["query", "dev", "--json", "{"])
+            .args(["query", "dev", "--body", "{"])
             .assert()
             .failure(),
     );
@@ -508,7 +508,7 @@ fn query_preflight_errors_do_not_need_running_runtime() {
         fixture
             .command()
             .current_dir(&project)
-            .args(["query", "dev", "--json", write_request, "--warm"])
+            .args(["query", "dev", "--body", write_request, "--warm"])
             .assert()
             .failure(),
     );
@@ -558,7 +558,7 @@ fn default_instance_and_noninteractive_error_branches_run_through_the_binary() {
         .args(["start", "--foreground"])
         .assert()
         .success();
-    let stop = stdout(
+    let stop = stderr(
         fixture
             .command()
             .current_dir(&project)
@@ -599,7 +599,7 @@ fn default_instance_and_noninteractive_error_branches_run_through_the_binary() {
             .assert()
             .failure(),
     );
-    assert!(unconfirmed_prune.contains("Re-run with --yes"));
+    assert!(unconfirmed_prune.contains("re-run with --yes"));
 
     let delete = stderr(
         fixture

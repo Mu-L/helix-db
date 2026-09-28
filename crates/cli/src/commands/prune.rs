@@ -2,9 +2,8 @@ use crate::local_runtime::LocalRuntime;
 use crate::output::Operation;
 use crate::project::ProjectContext;
 use crate::prompts::{self, PruneSelection};
-use crate::utils::{print_confirm, print_warning};
+use crate::{errors::CliError, output};
 use eyre::{eyre, Result};
-use std::io::IsTerminal;
 
 pub async fn run(instance: Option<String>, all: bool, yes: bool) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
@@ -48,7 +47,7 @@ async fn prune_one(project: &ProjectContext, instance: &str) -> Result<()> {
     if removed_container || removed_workspace {
         op.success();
     } else {
-        crate::output::info(&format!(
+        output::info(&format!(
             "No local runtime resources found for '{instance}'"
         ));
     }
@@ -67,17 +66,21 @@ fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {
 }
 
 async fn prune_all(project: &ProjectContext, yes: bool) -> Result<()> {
-    print_warning(
-        "This will remove local v2 containers, workspaces, and Helix-managed on-disk storage volumes for all local instances. Remote S3 object-store data is not deleted.",
-    );
-    if !yes && !std::io::stdin().is_terminal() {
-        return Err(eyre!(
-            "Refusing to prune all instances non-interactively. Re-run with --yes to confirm."
-        ));
-    }
-    if !yes && !print_confirm("Continue?")? {
-        crate::output::info("Prune cancelled");
-        return Ok(());
+    if !yes {
+        if !prompts::is_interactive() {
+            return Err(CliError::new(
+                "refusing to prune every local instance without confirmation",
+            )
+            .with_hint("re-run with --yes to confirm")
+            .into());
+        }
+        output::warning(
+            "This removes local containers, workspaces, and Helix-managed on-disk storage volumes for every local instance. Remote S3 object-store data is not deleted.",
+        );
+        if !prompts::confirm("Prune every local instance?")? {
+            output::info("Prune cancelled");
+            return Ok(());
+        }
     }
     for instance in project.config.local.keys() {
         prune_one(project, instance).await?;

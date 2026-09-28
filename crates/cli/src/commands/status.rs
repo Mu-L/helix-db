@@ -3,7 +3,7 @@ use crate::config::{DatabaseReference, InstanceInfo};
 use crate::local_runtime::LocalRuntime;
 use crate::project::ProjectContext;
 use crate::prompts::{self, StatusSelection};
-use crate::utils::{print_field, print_header, print_newline};
+use crate::utils::{print_field, print_header};
 use eyre::Result;
 use serde_json::Value;
 
@@ -13,7 +13,7 @@ pub async fn run(instance: Option<String>) -> Result<()> {
     print_header("Helix Project Status");
     print_field("Project", &project.config.project.name);
     print_field("Root", &project.root.display().to_string());
-    print_newline();
+    println!();
 
     let runtime = LocalRuntime::new(&project);
     print_header("Instances");

@@ -1,9 +1,9 @@
 use crate::config::{
     EnterpriseInstanceConfig, HelixConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
-use crate::output::Operation;
+use crate::output;
 use crate::prompts;
-use crate::utils::{command_exists, print_instructions};
+use crate::utils::command_exists;
 use crate::InitTarget;
 use eyre::Result;
 use std::env;
@@ -16,6 +16,7 @@ pub async fn run(
     target: Option<InitTarget>,
     skills: Option<bool>,
 ) -> Result<()> {
+    output::intro("Create a Helix project");
     let current_dir = env::current_dir()?;
     let project_dir = match path {
         Some(path) => path.into(),
@@ -39,7 +40,6 @@ pub async fn run(
     fs::create_dir_all(&project_dir)?;
     fs::create_dir_all(project_dir.join(".helix"))?;
 
-    let op = Operation::new("Initializing", &project_name);
     let mut config = HelixConfig::default_config(&project_name);
 
     let target = match target {
@@ -106,14 +106,16 @@ pub async fn run(
 
     config.save_to_file(&config_path)?;
     append_gitignore(&project_dir)?;
-    op.success();
+    output::step(&format!("Wrote {}", config_path.display()));
 
     maybe_install_tooling(&project_dir, skills);
 
-    let next_step_refs: Vec<&str> = next_steps.iter().map(String::as_str).collect();
-    print_instructions("Next steps:", &next_step_refs);
-
-    Ok(())
+    output::next_steps(&next_steps);
+    output::outro(&format!("Initialized {project_name}"));
+    output::emit(
+        &serde_json::json!({"project": project_name, "config": config_path}),
+        |_| Ok(()),
+    )
 }
 
 /// Rejects a `--name`/`-n` the interactive prompt (`prompts::input_name`) would
@@ -173,7 +175,7 @@ fn maybe_install_tooling(project_dir: &Path, skills: Option<bool>) {
     }
 
     if !command_exists("npx") {
-        crate::output::warning(
+        output::warning(
             "npx not found; skipping Helix skills + docs MCP install. Install Node.js/npm, \
              then run 'npx skills add HelixDB/skills'.",
         );
@@ -181,29 +183,25 @@ fn maybe_install_tooling(project_dir: &Path, skills: Option<bool>) {
     }
 
     if let Err(err) = crate::setup::install_skills(project_dir, true, true) {
-        crate::output::warning(&format!("Skipping Helix skills install: {err}"));
+        output::warning(&format!("Skipping Helix skills install: {err}"));
     }
     if let Err(err) = crate::setup::install_mcp(project_dir, true, true) {
-        crate::output::warning(&format!("Skipping Helix docs MCP install: {err}"));
+        output::warning(&format!("Skipping Helix docs MCP install: {err}"));
     }
 }
 
 fn local_next_steps(instance_name: &str) -> Vec<String> {
     vec![
+        format!("helix start {instance_name}"),
+        format!("helix query {instance_name} --file examples/request.json"),
         format!(
-            "Run 'helix start {instance_name}' to start local Helix Enterprise dev in the background"
-        ),
-        format!("Run 'helix query {instance_name} --file examples/request.json'"),
-        format!(
-            "Or query in TypeScript: helix query {instance_name} -e 'readBatch().varAs(\"c\", g().nWithLabel(\"User\").count()).returning([\"c\"])'"
+            "helix query {instance_name} -e 'readBatch().varAs(\"c\", g().nWithLabel(\"User\").count()).returning([\"c\"])'"
         ),
     ]
 }
 
 fn enterprise_next_steps(instance_name: &str) -> Vec<String> {
-    vec![format!(
-        "Run 'helix query {instance_name} --file <request.json>' through the authenticated broker"
-    )]
+    vec![format!("helix query {instance_name} --file <request.json>")]
 }
 
 fn write_example_request(project_dir: &Path) -> Result<()> {

@@ -683,12 +683,12 @@ async fn service_credential_and_generic_api_commands_cover_all_methods() {
         .success();
     fixture
         .command()
-        .args(["api", "post", "/v1/test-post", "--json", r#"{"value":1}"#])
+        .args(["api", "post", "/v1/test-post", "--body", r#"{"value":1}"#])
         .assert()
         .success();
     fixture
         .command()
-        .args(["api", "patch", "/v1/test-patch", "--json", r#"{"value":2}"#])
+        .args(["api", "patch", "/v1/test-patch", "--body", r#"{"value":2}"#])
         .assert()
         .success();
     fixture
@@ -762,7 +762,7 @@ fn cloud_command_validation_rejects_unsafe_or_incomplete_requests_before_dispatc
         ],
         vec!["api", "get", "https://example.com/v1/projects"],
         vec!["api", "get", "/v2/query"],
-        vec!["api", "post", "/v1/projects", "--json", "not-json"],
+        vec!["api", "post", "/v1/projects", "--body", "not-json"],
     ] {
         fixture.command().args(args).assert().failure();
     }

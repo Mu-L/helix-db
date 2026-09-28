@@ -1,7 +1,7 @@
 use crate::config::DEFAULT_LOCAL_PORT;
 use crate::external_tools::{self, ExternalTool};
 use crate::metrics_sender::MetricsSender;
-use crate::output::{Step, Verbosity};
+use crate::output::{OutputMode, Step, Verbosity};
 use crate::prompts;
 use crate::InitTarget;
 use eyre::{eyre, Result};
@@ -1221,19 +1221,20 @@ async fn seed_starter_data() -> Result<()> {
     .await
 }
 
-struct VerbosityReset(Option<Verbosity>);
+struct OutputModeReset(Option<OutputMode>);
 
-impl Drop for VerbosityReset {
+impl Drop for OutputModeReset {
     fn drop(&mut self) {
-        if let Some(original) = self.0 {
-            Verbosity::set(original);
-        }
+        let Some(original) = self.0 else {
+            return;
+        };
+        original.set();
     }
 }
 
 /// Run an async op behind a Step spinner with the inner command's output silenced.
 ///
-/// `init::run` and `start::run` write through the shared `Verbosity` knob (Operation
+/// `init::run` and `start::run` write through the shared output mode (Operation
 /// headers, info/warning lines, print_details summaries). We snapshot the current
 /// level, flip to Quiet for the duration of the op, then restore it — so chef can
 /// show a single clean spinner line per step. `-v` users keep the detailed output.
@@ -1242,16 +1243,16 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
-    let original = Verbosity::current();
-    let suppress = original != Verbosity::Verbose;
+    let original = OutputMode::current();
+    let suppress = original != OutputMode::Human(Verbosity::Verbose);
 
     let mut step = Step::with_messages(progress, completion);
     step.start();
 
     if suppress {
-        Verbosity::set(Verbosity::Silent);
+        OutputMode::Human(Verbosity::Silent).set();
     }
-    let _verbosity_reset = VerbosityReset(suppress.then_some(original));
+    let _mode_reset = OutputModeReset(suppress.then_some(original));
 
     let result = op().await;
 
@@ -2662,11 +2663,11 @@ mod tests {
 
     #[test]
     fn run_quietly_restores_verbosity_when_cancelled() {
-        let _lock = crate::output::VERBOSITY_TEST_LOCK
+        let _lock = crate::output::MODE_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let original = Verbosity::Quiet;
-        Verbosity::set(original);
+        let original = OutputMode::Human(Verbosity::Quiet);
+        original.set();
         let mut future = Box::pin(run_quietly("pending", "never", || async {
             std::future::pending::<Result<()>>().await
         }));
@@ -2676,17 +2677,17 @@ mod tests {
         assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
         assert_eq!(Verbosity::current(), Verbosity::Silent);
         drop(future);
-        assert_eq!(Verbosity::current(), original);
+        assert_eq!(OutputMode::current(), original);
     }
 
     #[test]
     fn run_quietly_restores_verbosity_after_success_and_error() {
-        let _lock = crate::output::VERBOSITY_TEST_LOCK
+        let _lock = crate::output::MODE_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
-        Verbosity::set(Verbosity::Normal);
+        OutputMode::Human(Verbosity::Normal).set();
         let mut success = Box::pin(run_quietly("success", "done", || async { Ok(()) }));
         assert!(matches!(
             success.as_mut().poll(&mut context),

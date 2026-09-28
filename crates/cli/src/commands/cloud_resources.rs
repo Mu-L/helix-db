@@ -323,20 +323,20 @@ pub async fn run_api(action: CloudApiAction) -> Result<()> {
                 .get(validate_api_path(&path)?, "call Cloud API")
                 .await?
         }
-        CloudApiAction::Post { path, json } => {
+        CloudApiAction::Post { path, body } => {
             client
                 .post(
                     validate_api_path(&path)?,
-                    parse_body(&json)?,
+                    parse_body(&body)?,
                     "call Cloud API",
                 )
                 .await?
         }
-        CloudApiAction::Patch { path, json } => {
+        CloudApiAction::Patch { path, body } => {
             client
                 .patch(
                     validate_api_path(&path)?,
-                    parse_body(&json)?,
+                    parse_body(&body)?,
                     "call Cloud API",
                 )
                 .await?

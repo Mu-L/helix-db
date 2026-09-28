@@ -28,8 +28,18 @@ pub enum PruneSelection {
     Instance(String),
 }
 
+/// Whether prompts may be shown. Prompts render on stderr, so a piped stdout
+/// (`helix database list | jq`) can still prompt; `--json` never prompts.
 pub fn is_interactive() -> bool {
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    interactive(
+        crate::output::OutputMode::current(),
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+    )
+}
+
+fn interactive(mode: crate::output::OutputMode, stdin_tty: bool, stderr_tty: bool) -> bool {
+    !mode.is_json() && stdin_tty && stderr_tty
 }
 
 /// Asks where a new project should be created.
@@ -153,12 +163,12 @@ fn select_instance_kind(prompt: &str) -> Result<InstanceKind> {
         .item(
             InstanceKind::Local,
             "Local",
-            "Run a local v2 Enterprise dev instance",
+            "Run a local Helix instance in Docker or Podman",
         )
         .item(
             InstanceKind::Enterprise,
-            "Enterprise Cloud",
-            "Link an Enterprise Cloud runtime",
+            "Helix Cloud",
+            "Link a Helix Cloud database",
         )
         .interact()?)
 }
@@ -236,7 +246,7 @@ pub fn select_status(instances: &[(String, String)]) -> Result<StatusSelection> 
     let mut select = cliclack::select("Show status for which instance?").item(
         all.clone(),
         "All instances",
-        "Show every local and Enterprise instance",
+        "Show every local and Cloud instance",
     );
     for (name, hint) in instances {
         select = select.item(name.clone(), name.as_str(), hint.as_str());
@@ -271,59 +281,19 @@ pub fn select_prune(local_instances: &[(String, String)]) -> Result<PruneSelecti
     }
 }
 
-pub fn select_workspace(workspaces: &[(String, String, String)]) -> Result<String> {
-    if workspaces.is_empty() {
-        return Err(eyre!("No workspaces found"));
-    }
-    if workspaces.len() == 1 {
-        return Ok(workspaces[0].0.clone());
-    }
-
-    let mut select = cliclack::select("Select a workspace");
-    for (id, name, slug) in workspaces {
-        select = select.item(id.clone(), name.as_str(), format!("slug: {slug}").as_str());
-    }
-    Ok(select.interact()?)
-}
-
-pub fn select_project(projects: &[(String, String)]) -> Result<String> {
-    if projects.is_empty() {
-        return Err(eyre!("No projects found in this workspace"));
-    }
-    if projects.len() == 1 {
-        return Ok(projects[0].0.clone());
-    }
-
-    let mut select = cliclack::select("Select a project");
-    for (id, name) in projects {
-        let short_id = if id.len() > 8 { &id[..8] } else { id.as_str() };
-        select = select.item(
-            id.clone(),
-            name.as_str(),
-            format!("id: {short_id}").as_str(),
-        );
-    }
-    Ok(select.interact()?)
-}
-
-pub fn select_cluster(clusters: &[(String, String, String)]) -> Result<String> {
-    if clusters.is_empty() {
-        return Err(eyre!("No Enterprise clusters found"));
-    }
-    if clusters.len() == 1 {
-        return Ok(clusters[0].0.clone());
-    }
-
-    let mut select = cliclack::select("Select an Enterprise cluster");
-    for (id, name, hint) in clusters {
-        select = select.item(id.clone(), name.as_str(), hint.as_str());
-    }
-    Ok(select.interact()?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompts_need_both_terminals_and_never_run_in_json_mode() {
+        use crate::output::{OutputMode, Verbosity};
+        let human = OutputMode::Human(Verbosity::Normal);
+        assert!(interactive(human, true, true));
+        assert!(!interactive(human, false, true));
+        assert!(!interactive(human, true, false));
+        assert!(!interactive(OutputMode::Json, true, true));
+    }
 
     #[test]
     fn current_project_directory_choice_uses_current_directory() {

@@ -1,6 +1,6 @@
 use crate::config::{InstanceInfo, LocalInstanceConfig, LocalStorageMode, S3StorageConfig};
 use crate::local_runtime::LocalRuntime;
-use crate::output::{Operation, Verbosity};
+use crate::output::{self, Operation};
 use crate::project::ProjectContext;
 use crate::prompts;
 use eyre::{eyre, Result};
@@ -18,7 +18,7 @@ pub async fn run(
     let _ = dotenvy::from_path(project.root.join(".env"));
     let instance = resolve_local_instance(&project, instance)?;
     let InstanceInfo::Local(config) = project.config.get_instance(&instance)? else {
-        return Err(eyre!("'{instance}' is not a local v2 instance"));
+        return Err(eyre!("'{instance}' is not a local instance"));
     };
     let mut config = config.clone();
     if let Some(port) = port {
@@ -47,24 +47,28 @@ pub async fn run(
         project
             .config
             .save_to_file(&project.root.join("helix.toml"))?;
-        crate::output::info("Saved port, storage, and image settings to helix.toml.");
+        output::info("Saved port, storage, and image settings to helix.toml.");
     }
 
     warn_about_storage(&project, &instance, &config);
 
     if foreground {
-        crate::output::info("Running in foreground. Press Ctrl-C to stop.");
+        output::info("Running in foreground. Press Ctrl-C to stop.");
         runtime.run_foreground(&instance, prepared).await?;
         op.success();
     } else {
         runtime.run_detached(&instance, prepared)?;
+        let url = format!("http://localhost:{}", config.port);
+        let container = runtime.container_name(&instance);
+        output::note(
+            &instance,
+            &output::table::key_values(&[("URL", url.clone()), ("Container", container.clone())]),
+        );
         op.success();
-        if Verbosity::current().show_normal() {
-            Operation::print_details(&[
-                ("URL", &format!("http://localhost:{}", config.port)),
-                ("Container", &runtime.container_name(&instance)),
-            ]);
-        }
+        output::emit(
+            &serde_json::json!({"instance": instance, "url": url, "container": container}),
+            |_| Ok(()),
+        )?;
     }
 
     Ok(())
@@ -107,13 +111,13 @@ fn apply_s3_overrides(config: &mut LocalInstanceConfig, s3: &crate::S3StorageArg
 /// the instance workspace) so repeat runs stay quiet.
 fn warn_about_storage(project: &ProjectContext, instance: &str, config: &LocalInstanceConfig) {
     if config.storage.is_disk() {
-        crate::output::info(
+        output::info(
             "Local HelixDB is using on-disk storage. 'helix stop' preserves data; 'helix prune' deletes it.",
         );
         return;
     }
     if config.storage.is_s3() {
-        crate::output::info(
+        output::info(
             "Local HelixDB is using remote S3 storage. 'helix stop', 'helix restart', and 'helix prune' do not delete remote data.",
         );
         return;
@@ -123,7 +127,7 @@ fn warn_about_storage(project: &ProjectContext, instance: &str, config: &LocalIn
     if marker.exists() {
         return;
     }
-    crate::output::warning(
+    output::warning(
         "Local HelixDB uses in-memory storage. Stopping or restarting wipes local data.",
     );
     let _ = std::fs::write(&marker, b"");

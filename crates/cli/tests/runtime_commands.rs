@@ -82,7 +82,7 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
         .assert()
         .success();
 
-    let stopped = stdout(
+    let stopped = stderr(
         fixture
             .command()
             .current_dir(&project)
@@ -91,7 +91,7 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
             .assert()
             .success(),
     );
-    assert!(stopped.contains("Stopped 'dev' successfully"));
+    assert!(stopped.contains("Stopped dev"));
     fixture
         .command()
         .current_dir(&project)
@@ -155,7 +155,7 @@ async fn legacy_minio_sidecars_are_removed_and_their_data_is_kept_until_prune() 
         .success();
 
     // Every resource inspection succeeds, so the MinIO-era volume is present.
-    let started = stdout(
+    let started = stderr(
         fixture
             .command()
             .current_dir(&project)
@@ -332,7 +332,7 @@ async fn hash_suffixed_legacy_resources_are_adopted_on_upgrade() {
     )
     .unwrap();
 
-    let started = stdout(
+    let started = stderr(
         fixture
             .command()
             .current_dir(&project)
@@ -715,7 +715,7 @@ async fn image_selection_and_pull_policy_matrix() {
             }
             let result = command.assert();
             if succeeds {
-                let output = stdout(result.success());
+                let output = stderr(result.success());
                 assert!(output.contains(&format!("ghcr.io/helixdb/helixdb:{tag}")));
                 assert!(output.contains("sha256:"));
             } else {

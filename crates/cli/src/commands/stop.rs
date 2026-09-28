@@ -12,7 +12,7 @@ pub async fn run(instance: Option<String>) -> Result<()> {
         project.config.get_instance(&instance)?,
         InstanceInfo::Local(_)
     ) {
-        return Err(eyre!("'{instance}' is not a local v2 instance"));
+        return Err(eyre!("'{instance}' is not a local instance"));
     }
     let op = Operation::new("Stopping", &instance);
     if LocalRuntime::new(&project).stop(&instance)? {

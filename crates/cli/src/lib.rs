@@ -32,7 +32,7 @@ pub enum AuthAction {
 
 #[derive(Subcommand)]
 pub enum InitTarget {
-    /// Initialize a local v2 development project
+    /// Initialize a project with a local development instance
     Local {
         /// Local instance name
         #[arg(short, long, default_value = "dev")]
@@ -102,7 +102,7 @@ impl InitTarget {
 
 #[derive(Subcommand)]
 pub enum AddTarget {
-    /// Add a local v2 development instance
+    /// Add a local development instance
     Local {
         /// Local instance name
         #[arg(short, long)]
@@ -212,7 +212,7 @@ pub enum ConfigAction {
         #[command(subcommand)]
         action: ProjectConfigAction,
     },
-    /// List Enterprise clusters
+    /// List Helix Cloud clusters
     Cluster {
         #[command(subcommand)]
         action: ClusterConfigAction,
@@ -276,7 +276,7 @@ pub enum ProjectConfigAction {
 
 #[derive(Subcommand)]
 pub enum ClusterConfigAction {
-    /// List Enterprise clusters
+    /// List Helix Cloud clusters
     List {
         #[arg(long)]
         workspace_id: Option<String>,
@@ -293,10 +293,10 @@ pub enum ClusterConfigAction {
         format: ConfigOutputFormat,
     },
 
-    /// List indexes in an Enterprise cluster
+    /// List indexes in a Helix Cloud cluster
     #[command(alias = "indices")]
     Indexes {
-        /// Enterprise cluster ID; defaults to the current project's Enterprise instance
+        /// Cluster ID; defaults to the current project's Cloud instance
         #[arg(long, value_name = "CLUSTER_ID")]
         cluster_id: Option<String>,
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
@@ -455,13 +455,15 @@ pub enum CloudApiAction {
     },
     Post {
         path: String,
+        /// JSON request body
         #[arg(long, default_value = "{}")]
-        json: String,
+        body: String,
     },
     Patch {
         path: String,
+        /// JSON request body
         #[arg(long, default_value = "{}")]
-        json: String,
+        body: String,
     },
     Delete {
         path: String,

@@ -63,7 +63,7 @@ database = "tenant:tenant-1"
         fixture
             .command()
             .current_dir(&project)
-            .args(["query", "--json"])
+            .args(["query", "--body"])
             .arg(request.to_string())
             .arg("--compact")
             .assert()
@@ -113,7 +113,7 @@ name = "explicit-cloud-query"
         fixture
             .command()
             .current_dir(&project)
-            .args(["query", "tenant:tenant-2", "--json"])
+            .args(["query", "tenant:tenant-2", "--body"])
             .arg(request.to_string())
             .arg("--compact")
             .assert()
@@ -146,7 +146,7 @@ database = "tenant:tenant-1"
             .current_dir(project)
             .args([
                 "query",
-                "--json",
+                "--body",
                 r#"{"request_type":"read","query":{"queries":[],"returns":[]}}"#,
             ])
             .assert()
@@ -327,7 +327,7 @@ async fn query_command_preserves_the_shared_transport_corpus() {
             fixture
                 .command()
                 .current_dir(&project)
-                .args(["query", "dev", "--json"])
+                .args(["query", "dev", "--body"])
                 .arg(serde_json::to_string(&request).unwrap())
                 .args([
                     "--host",
