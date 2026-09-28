@@ -18,6 +18,9 @@ work with connected entities, semantically similar content, and exact terms with
 synchronizing separate stores. Teams use HelixDB to build enterprise company brains,
 large-scale people search, and AI agent swarms.
 
+New to these ideas? The [learning center](/learn) explains graph databases, vector and
+full-text search, and AI agent memory from first principles.
+
 ```mermaid
 %%{init: {"themeCSS": ".cluster-label { translate: -140px 0; }"}}%%
 flowchart TB
@@ -1390,6 +1393,9 @@ Page type: Concept
 HelixDB stores data as a labeled property graph. Nodes represent entities, directed
 edges represent relationships, and both carry typed properties. Optional indexes make
 selected properties efficient to filter, order, and search.
+
+New to graph databases? Start with [What is a graph database?](/learn/graph-databases/what-is-a-graph-database)
+and [What is a property graph?](/learn/graph-databases/what-is-a-property-graph).
 
 ## Nodes, edges, and direction
 
@@ -3964,6 +3970,9 @@ Every definition declares a non-zero dimension and one distance metric: cosine,
 Euclidean, or Manhattan. Stored embeddings and every query vector must have exactly
 the declared dimension.
 
+For background, see [What is vector search?](/learn/vector-search/what-is-vector-search)
+and [vector distance metrics](/learn/vector-search/vector-distance-metrics).
+
 ## Create a vector index
 
 ```rust Rust
@@ -4194,6 +4203,9 @@ A text index provides durable BM25 full-text search over a top-level string or
 string-array property on nodes or edges. Use it to rank records by exact terms and
 keyword relevance.
 
+For background, see [What is full-text search?](/learn/full-text-search/what-is-full-text-search)
+and [What is BM25?](/learn/full-text-search/what-is-bm25).
+
 ## Create a text index
 
 ```rust Rust
@@ -4390,6 +4402,9 @@ Prefiltering ranks only the nodes or edges that a traversal reaches, instead of 
 index. Use it when graph membership is a correctness boundary, such as "documents this
 user may access" or "products reachable from this category." It works the same way for
 vector and full-text search.
+
+For why filtering before ranking matters, see
+[Filtered vector search](/learn/vector-search/filtered-vector-search).
 
 ## How it works
 
@@ -8665,4 +8680,3225 @@ helix workspace get <workspace-id> --format json
 - [`helix auth`](/cli/command-reference/auth) — log in before listing workspaces.
 - [`helix project`](/cli/command-reference/project) — list projects in a workspace.
 - [Helix Cloud workflow](/cli/workflows/helix_cloud) — end-to-end Cloud usage.
+
+# Learning center
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+The learning center explains the ideas behind modern data infrastructure for AI
+applications: how graph databases model relationships, how vector and full-text search
+rank results, how agents remember, and why storage architecture decides cost at scale.
+Each page answers one question from first principles and ends with how HelixDB
+approaches it.
+
+## Graph databases
+
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, traversals, and when a graph is the right model.
+  </Card>
+  <Card title="Graph vs relational databases" icon="table" href="/learn/graph-databases/graph-vs-relational-database">
+    How multi-hop questions differ from joins, and when each model fits.
+  </Card>
+  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+    Entities, relationships, and provenance for search and LLMs.
+  </Card>
+  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+    Labels and properties on nodes and edges, compared with RDF.
+  </Card>
+
+## Vector search
+
+  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, nearest neighbors, and approximate search.
+  </Card>
+  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+    What a vector store does and where vector-only storage falls short.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Pre-filtering, post-filtering, and returning the right top k.
+  </Card>
+  <Card title="Vector distance metrics" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+    Cosine, Euclidean, and Manhattan distance, and how to choose.
+  </Card>
+
+## Full-text search
+
+  <Card title="What is full-text search?" icon="magnifying-glass" href="/learn/full-text-search/what-is-full-text-search">
+    Inverted indexes, analyzers, and relevance ranking.
+  </Card>
+  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
+    The ranking function behind most keyword search, explained.
+  </Card>
+  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+    Combining keyword and vector results with rank fusion.
+  </Card>
+
+## AI memory
+
+  <Card title="What is AI agent memory?" icon="memory" href="/learn/ai-memory/what-is-ai-agent-memory">
+    Working, episodic, and semantic memory for LLM agents.
+  </Card>
+  <Card title="Building long-term memory" icon="layer-group" href="/learn/ai-memory/long-term-memory-for-ai-agents">
+    A data model and read and write paths for durable agent memory.
+  </Card>
+  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+    Retrieval that follows relationships, compared with vector RAG.
+  </Card>
+
+## Database architecture
+
+  <Card title="Databases on object storage" icon="cloud" href="/learn/database-architecture/object-storage-databases">
+    Separating storage from compute, and what it means for cost.
+  </Card>
+  <Card title="Graph, vector, and text in one database" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+    The hidden costs of stitching separate stores together.
+  </Card>
+
+## Build with HelixDB
+
+HelixDB is an open-source graph database with native vector search and BM25 full-text
+search, built on object storage. Start a local instance in a few commands with
+[Get started](/database/helix-db/start-here/quickstart), or read the
+[introduction](/database/helix-db/start-here/introduction).
+
+# What is a graph database?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A graph database is a database that stores data as nodes (entities), edges
+(relationships between entities), and properties (values on both), and answers queries
+by following those relationships. Because connections are stored as data rather than
+rebuilt from matching keys at query time, questions about how things relate, such as
+who knows whom, what depends on what, or which accounts share a device, are direct to
+express and typically efficient to run. Graph databases are used for recommendations,
+fraud detection, knowledge graphs, access control, network topology, and retrieving
+context for AI applications.
+
+## How does a graph database work?
+
+A graph database organizes data around three building blocks.
+
+| Element | What it represents | Example |
+| --- | --- | --- |
+| Node | An entity | A user, a product, a support ticket |
+| Edge | A named, usually directed relationship between two nodes | A user `PURCHASED` a product |
+| Property | A key-value pair stored on a node or an edge | `name` on a user, `channel` on a purchase |
+
+Many graph databases also give every node and edge a label, or type, such as `User` or
+`PURCHASED`. Labels group similar elements and scope queries and indexes.
+
+```mermaid
+flowchart LR
+    u1["User<br/>name: user-a"] -->|"PURCHASED<br/>channel: web"| lamp["Product<br/>title: Desk lamp"]
+    u2["User<br/>name: user-b"] -->|PURCHASED| lamp
+    u2 -->|PURCHASED| bulbs["Product<br/>title: Bulb pack"]
+    lamp -->|IN_CATEGORY| cat["Category<br/>name: Lighting"]
+    bulbs -->|IN_CATEGORY| cat
+```
+
+A query usually starts from one or more nodes, often found through an index on a
+property, and then walks edges to reach related nodes. "Products bought by people who
+bought this lamp" is a walk from the lamp to its buyers, then from each buyer to their
+other purchases.
+
+### Following relationships instead of joining tables
+
+In a relational database, a relationship is typically stored as a foreign key and
+rebuilt at query time with a join, which looks up matching keys in an index or scans a
+table. Many graph databases instead store each node's relationships with the node, or in
+an adjacency structure keyed by node, so moving from a node to its neighbors is a direct
+lookup. This idea is often called index-free adjacency.
+
+As a result, the cost of a traversal tends to grow with the number of relationships
+the query touches rather than with the total size of the data, which keeps multi-hop
+questions such as friends of friends practical at query time. Implementations differ,
+and some systems use indexes internally, but the principle holds: relationships are
+stored, not computed.
+
+## What query languages do graph databases use?
+
+Graph query languages describe patterns of connected nodes and edges rather than tables
+and joins.
+
+| Language | Style | Data model |
+| --- | --- | --- |
+| GQL (ISO/IEC 39075) | Declarative pattern matching; the ISO standard graph query language | Property graph |
+| openCypher | Declarative pattern matching with ASCII-art patterns | Property graph |
+| Gremlin | Step-by-step traversal written as a chain of operations | Property graph |
+| SPARQL | Declarative matching of triple patterns; a W3C standard | RDF |
+
+In the declarative style, a query reads like a sketch of the graph. This pattern finds
+other products bought by buyers of the desk lamp:
+
+```text
+MATCH (lamp:Product {title: "Desk lamp"})<-[:PURCHASED]-(buyer:User)-[:PURCHASED]->(other:Product)
+RETURN DISTINCT other.title
+```
+
+Some databases skip a text language and expose typed APIs or SDK builders instead, so
+queries are assembled and type-checked in application code.
+
+## When should you use a graph database?
+
+A graph database fits when relationships are the point of the question: queries follow
+connections across several hops, the shape of those connections varies, or the
+relationships carry their own data. Common graph database use cases:
+
+| Use case | What the graph holds | Typical question |
+| --- | --- | --- |
+| Recommendations | Users, items, and interactions | What did similar users engage with next? |
+| Fraud rings | Accounts, devices, cards, and addresses | Which accounts share a device or payment method with a flagged account? |
+| Knowledge graphs | Entities and typed facts about them | What do we know about this product, and where did each fact come from? |
+| Identity and access | Users, groups, roles, and resources | Can this user read this document through any group membership? |
+| Network and IT topology | Services, hosts, links, and dependencies | What fails downstream if this service goes down? |
+| AI context and agent memory | Documents, chunks, entities, conversations, and memories | What does the agent know about this customer, and from which source? |
+
+## Graph databases for AI and RAG
+
+Retrieval-augmented generation (RAG) gives a language model relevant context before it
+answers. Vector search finds passages whose meaning is close to the question, but it
+returns isolated chunks. It does not know that a ticket belongs to a customer, that one
+document supersedes another, or that a user may only see certain folders.
+
+A graph adds that structure. An application can find entry points with vector or keyword
+search, follow edges to related entities, source documents, and newer versions, and
+limit everything to what the requesting user is allowed to see. The same pattern
+underpins agent memory, where facts, their sources, and how they change over time are
+stored as connected records. See [What is GraphRAG?](/learn/ai-memory/what-is-graphrag)
+and [What is AI agent memory?](/learn/ai-memory/what-is-ai-agent-memory).
+
+## When is a graph database not the right tool?
+
+A graph database is not a general replacement for other databases. Consider another
+option when:
+
+- **The workload is mostly aggregation and reporting.** Sums, group-bys, and scans over
+  every row of a large table are the strength of relational and columnar analytics
+  systems.
+- **Relationships are shallow and fixed.** If queries go one join deep and the schema
+  rarely changes, a relational database handles them well with mature tooling.
+- **Access is simple key-value lookup.** Fetching a record by its ID does not need
+  traversal.
+- **Your tooling depends on SQL.** Existing BI tools and SQL skills can outweigh the
+  modeling benefits.
+
+For a side-by-side comparison, see
+[Graph database vs relational database](/learn/graph-databases/graph-vs-relational-database).
+
+## How do you choose a graph database?
+
+Graph databases, including open-source ones, differ in ways that matter early:
+
+- **Data model:** a labeled property graph or RDF triples. See
+  [What is a property graph?](/learn/graph-databases/what-is-a-property-graph).
+- **Query interface:** a text language such as GQL, openCypher, Gremlin, or SPARQL, or
+  typed APIs in your application language.
+- **Transactions:** whether reads and writes are ACID and at which isolation level.
+- **Search:** whether vector and full-text search live in the same system and
+  transaction, or in separate stores you keep in sync.
+- **Storage architecture:** whether data must fit on one machine, or storage scales
+  separately from compute.
+- **License and deployment:** open source or proprietary, managed or self-hosted, server
+  or embedded.
+
+## How HelixDB works as a graph database
+
+HelixDB is an open-source (Apache 2.0) graph database with native vector search and BM25
+full-text search, built on object storage. Its data model is one labeled property graph:
+nodes are entities, directed edges are relationships, and each has exactly one label and
+typed properties.
+
+- **Typed SDK builders instead of a text query language.** Queries are built with typed
+  SDKs in Rust, TypeScript, Go, and Python, or written as raw JSON. Each produces a JSON
+  operation tree sent to `POST /v2/query`, with no query deployment step.
+- **Graph operations.** Traversals over outgoing, incoming, or both directions, bounded
+  repeats, branches, shortest path, projections, and aggregates.
+- **Search on the same data.** Vector and text indexes are access paths over properties
+  on nodes or edges, so graph traversals, vector search, and BM25 search run in the same
+  ACID transaction.
+- **Object storage as the source of truth.** NVMe/SSD and memory act as caches, so
+  storage scales independently of compute.
+
+HelixDB runs as a managed service (Helix Cloud), as a local server in a Docker
+container, or embedded in-process. Read the
+[introduction](/database/helix-db/start-here/introduction), the
+[data model](/database/helix-db/core-concepts/data-model), and
+[traversals](/database/helix-db/query-guides/traversals) to go further, or see
+[why graph, vector, and text belong in one database](/learn/database-architecture/one-database-for-graph-vector-and-text).
+
+## Frequently asked questions
+
+### What is the difference between a graph database and a relational database?
+
+A relational database stores rows in tables and joins them on keys at query time. A
+graph database stores relationships as edges and follows them. Relational databases are
+typically stronger for tabular records and reporting, and graph databases for questions
+that span many connected hops. See
+[Graph vs relational](/learn/graph-databases/graph-vs-relational-database).
+
+### Is a knowledge graph the same as a graph database?
+
+No. A knowledge graph is a body of data: entities and facts organized by a shared
+schema. A graph database is software for storing and querying graph data. Knowledge
+graphs are often stored in graph databases; see
+[What is a knowledge graph?](/learn/graph-databases/what-is-a-knowledge-graph).
+
+### Do graph databases use SQL?
+
+Usually not as their primary language. Many use graph query languages such as GQL,
+openCypher, Gremlin, or SPARQL, and some expose typed APIs instead. SQL also has a
+standard extension for property graph queries, SQL/PGQ, which some relational systems
+implement.
+
+### Is there an open-source graph database?
+
+Yes. Many graph databases are available under open-source licenses, with different data
+models, query languages, and storage designs. HelixDB is open source under the Apache 2.0
+license and includes vector and full-text search in the same database.
+
+### Are graph databases good for AI applications?
+
+They help when an AI application needs structure alongside semantic search: entity
+relationships, provenance, versions, and permissions. Many AI systems combine a graph
+with vector and full-text search to retrieve both similar content and the facts
+connected to it. See [Hybrid search](/learn/full-text-search/hybrid-search).
+
+## Related topics
+
+  <Card title="Graph vs relational databases" icon="table" href="/learn/graph-databases/graph-vs-relational-database">
+    How multi-hop questions differ from joins, and when each model fits.
+  </Card>
+  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+    Labels and properties on nodes and edges, compared with RDF.
+  </Card>
+  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+    Entities, relationships, and provenance for search and LLMs.
+  </Card>
+  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+    Retrieval that follows relationships, compared with vector RAG.
+  </Card>
+  <Card title="HelixDB data model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model">
+    How HelixDB represents nodes, edges, properties, and indexes.
+  </Card>
+  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+    Follow outgoing and incoming relationships in a HelixDB query.
+  </Card>
+
+# Graph database vs relational database
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A relational database stores data as rows in tables and rebuilds relationships at query
+time by joining tables on keys, while a graph database stores relationships directly as
+edges between nodes and answers queries by following them. Relational databases are
+typically the better choice for tabular records, aggregation, and reporting. Graph
+databases are typically the better choice when questions follow connections across many
+hops, such as friends of friends, dependency chains, or fraud rings. Many applications
+use both.
+
+## How do graph and relational databases differ?
+
+| | Relational database | Graph database |
+| --- | --- | --- |
+| Data model | Tables of rows and columns | Nodes and edges, each with properties |
+| Relationships | Foreign keys, rebuilt with joins at query time | Edges stored as data and followed directly |
+| Schema | Defined up front; changes usually need a migration | Typically flexible: labels and properties can vary, with optional constraints |
+| Query style | SQL: tables, joins, filters, and projections | Pattern matching or step-by-step traversal (GQL, openCypher, Gremlin) or typed APIs |
+| Multi-hop queries | Repeated self-joins or recursive common table expressions | Traversals, including variable-length and repeated paths |
+| Aggregation and reporting | A core strength, with mature optimizers and BI tooling | Supported, but usually secondary to traversal |
+| Transactions | Typically ACID | Many systems are ACID; guarantees vary by system |
+
+The biggest practical difference is how each model handles a question whose answer is
+several relationships away.
+
+## Why are multi-hop queries different?
+
+In a relational database, each hop is a join: the database takes the rows it has so
+far, looks up matching keys in another table, usually through an index, and produces a
+larger intermediate result. A fixed number of hops means a fixed number of joins. An
+unknown number of hops, such as "all parts inside this assembly, however deeply
+nested," needs a recursive query that repeats the join until no new rows appear.
+
+In a graph database, each hop reads the edges attached to the current nodes. Many graph
+databases store those edges with each node, so the work per hop tracks the number of
+relationships actually followed. Variable-depth paths are part of the query language
+rather than a special construct.
+
+## Example: which products does a supplier affect?
+
+Suppose a supplier cannot ship. Its parts go into sub-assemblies, which go into larger
+assemblies, which eventually go into finished products. The question is: which
+products depend, directly or indirectly, on this supplier? The depth is not known in
+advance.
+
+### The relational version
+
+A typical relational schema uses three tables:
+
+| Table | Columns |
+| --- | --- |
+| `supplier_parts` | `supplier_id`, `part_id` |
+| `part_usage` | `part_id`, `used_in_part_id` |
+| `products` | `product_id`, `name`, `part_id` |
+
+Each product row points at its top-level assembly through `part_id`. The query needs a
+recursive common table expression that walks `part_usage` upward until it finds no new
+parts, then joins the result to `products`:
+
+```sql
+WITH RECURSIVE affected(part_id) AS (
+  SELECT part_id
+  FROM supplier_parts
+  WHERE supplier_id = 'supplier-a'
+  UNION
+  SELECT pu.used_in_part_id
+  FROM part_usage AS pu
+  JOIN affected AS a ON pu.part_id = a.part_id
+)
+SELECT DISTINCT p.product_id, p.name
+FROM products AS p
+JOIN affected AS a ON p.part_id = a.part_id;
+```
+
+`UNION` removes duplicate rows, which also stops the recursion if the usage data
+contains a cycle.
+
+### The graph version
+
+In a graph, the same data is a set of nodes and edges:
+
+```mermaid
+flowchart LR
+    s["Supplier<br/>supplier-a"] -->|SUPPLIES| p1["Part<br/>sensor"]
+    p1 -->|USED_IN| p2["Part<br/>control board"]
+    p2 -->|USED_IN| p3["Part<br/>motor unit"]
+    p3 -->|USED_IN| prod1["Product<br/>floor fan"]
+    p2 -->|USED_IN| prod2["Product<br/>air purifier"]
+```
+
+The traversal reads as a description of that picture:
+
+```text
+start   at the Supplier node "supplier-a"
+out     follow SUPPLIES edges to the parts it provides
+repeat  follow USED_IN edges to every assembly that contains those parts
+keep    only nodes labeled Product
+dedup   return each product once
+```
+
+Both versions return the same products. The difference is in how the work is expressed
+and executed. The SQL version builds a working table and joins it back against
+`part_usage` on every iteration. The graph version reads each part's outgoing `USED_IN`
+edges directly. For shallow questions over well-indexed tables, the relational version
+performs well. As depth, branching, and the number of relationship types grow, the graph
+version typically stays simpler to write and its cost tracks the edges it touches.
+
+## When should you use a graph database instead of a relational database?
+
+A graph database is usually the better fit when:
+
+- Questions routinely span several hops or an unknown depth, such as dependency chains,
+  org hierarchies, or bill-of-materials lookups.
+- Relationships carry their own data, such as when a purchase happened or how confident
+  an extracted fact is.
+- The kinds of relationships change often, so adding a new relationship type should not
+  require a schema migration.
+- You need path questions: how two entities are connected, or the shortest route
+  between them.
+- The data feeds AI retrieval that combines connected facts with semantic or keyword
+  search.
+
+## When is a relational database the better choice?
+
+A relational database is usually the better fit when:
+
+- The data is naturally tabular, such as orders, invoices, and ledger entries.
+- The main workload is aggregation, reporting, and ad hoc analysis across many rows.
+- Relationships are few, stable, and one or two joins deep.
+- Strict schema constraints across tables, such as foreign keys and check constraints,
+  are central to correctness.
+- Your team, BI tools, and pipelines already depend on SQL.
+
+Relational databases are mature, widely understood, and well supported. Choosing a
+graph database is worth it when relationship queries are central, not incidental.
+
+## Can you use a graph database and a relational database together?
+
+Yes, and many systems do. A common pattern keeps transactional records in a relational
+database and maintains a graph of the relationship-heavy parts, such as users,
+permissions, and entities, for traversal and retrieval. The cost is keeping the two in
+sync: each change must reach both stores, and reads that span them are not covered by a
+single transaction.
+
+## How HelixDB compares to a relational database
+
+HelixDB is a graph database, not a relational one. Its data is one labeled property
+graph of nodes and directed edges with typed properties, and queries are built with
+typed SDKs in Rust, TypeScript, Go, and Python, or as raw JSON, rather than written in
+SQL. Several relational ideas carry over:
+
+- **Indexes.** Secondary indexes provide equality, unique equality (node labels only),
+  and ascending or descending range lookups, on nodes or edges. See
+  [Secondary indexes](/database/helix-db/query-guides/secondary-indexes).
+- **Transactions.** Each request is one ACID transaction over a committed snapshot with
+  serializable snapshot isolation, and all entries in a write batch commit or roll back
+  together. See [Guarantees](/database/helix-cloud/operate/guarantees).
+- **Aggregates.** Count, sum, min, max, mean, and group count.
+
+For multi-hop questions, HelixDB provides traversals over outgoing, incoming, or both
+directions, bounded repeats, and shortest path; see
+[Traversals](/database/helix-db/query-guides/traversals). Vector and BM25 search run in
+the same transaction as those traversals.
+
+## Frequently asked questions
+
+### Is a graph database faster than a relational database?
+
+It depends on the query. For multi-hop traversals over connected data, a graph database
+typically does less work per hop. For scans, aggregations, and simple lookups, a
+relational database is often as fast or faster. Measure your own queries on your own
+data.
+
+### Can a relational database store graph data?
+
+Yes. An edge table with source and target columns represents a graph, and recursive
+queries can traverse it. This works well for shallow or occasional traversals, and gets
+harder to write and tune as depth, branching, and relationship types grow.
+
+### Do graph databases support ACID transactions?
+
+Many do, though isolation levels and transaction scope vary between systems. Check
+whether reads, writes, and any search indexes are covered by the same transaction.
+
+### Do graph databases have a schema?
+
+Many graph databases use labels and typed properties without requiring a fixed schema,
+and some let you add constraints such as uniqueness. This flexibility helps when data
+evolves, but define constraints wherever integrity matters.
+
+### Should I move from SQL to a graph database?
+
+Usually only part of the workload. Move the relationship-heavy queries that are awkward
+as joins, and keep reporting and tabular records where SQL serves them well.
+
+## Related topics
+
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, traversals, and when a graph is the right model.
+  </Card>
+  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+    Labels and properties on nodes and edges, compared with RDF.
+  </Card>
+  <Card title="Graph, vector, and text in one database" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+    The hidden costs of stitching separate stores together.
+  </Card>
+  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+    Follow outgoing and incoming relationships in a HelixDB query.
+  </Card>
+
+# What is a knowledge graph?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A knowledge graph is a structured collection of facts about entities, such as people,
+products, documents, and concepts, and the typed relationships between them, organized
+by a shared schema often called an ontology. Each fact links two entities through a
+named relationship and can record where it came from, so software can answer questions
+by following connections and cite its sources. Knowledge graphs are commonly stored in
+graph databases and are used to ground search, recommendations, and large language
+model (LLM) applications in connected, verifiable facts.
+
+## What is in a knowledge graph?
+
+| Part | What it is | Example |
+| --- | --- | --- |
+| Entity | A distinct thing the graph knows about | A customer, a product, a feature, a support ticket |
+| Relationship | A typed, directed connection between two entities | A ticket is `ABOUT` a feature |
+| Attribute | A value that describes an entity or relationship | A product's `releaseStage`, a relationship's `confidence` |
+| Ontology or schema | The allowed entity types, relationship types, and attributes | "A `Ticket` can be `ABOUT` a `Feature`, not a `Customer`" |
+| Provenance | Where each fact came from and when | The document chunk a relationship was extracted from |
+
+```mermaid
+flowchart LR
+    cust["Customer<br/>customer-a"] -->|OPENED| ticket["Ticket<br/>Export fails"]
+    ticket -->|ABOUT| feat["Feature<br/>CSV export"]
+    feat -->|PART_OF| prod["Product<br/>Reports"]
+    doc["Document<br/>Export guide"] -->|DESCRIBES| feat
+    ticket -.->|EXTRACTED_FROM| chunk["Chunk<br/>ticket thread excerpt"]
+```
+
+The ontology is what separates a knowledge graph from an arbitrary set of links. It
+fixes what kinds of things exist and how they may relate, so facts from different
+sources land in the same shape and queries mean the same thing everywhere.
+
+## Knowledge graph vs graph database
+
+A knowledge graph is data with agreed meaning. A graph database is software that stores
+and queries graph-shaped data. The two are often used together but are not the same.
+
+| | Knowledge graph | Graph database |
+| --- | --- | --- |
+| What it is | A body of facts organized by an ontology | A storage and query engine |
+| Main concern | Meaning, consistency, and provenance of facts | Storage, indexing, transactions, and traversal |
+| Can exist without the other? | Yes, for example as RDF files or relational tables | Yes, for example holding a network topology or social graph |
+
+A knowledge graph can be stored as a property graph or as RDF triples. See
+[What is a property graph?](/learn/graph-databases/what-is-a-property-graph) for how the
+two models differ.
+
+## How do you build a knowledge graph?
+
+  <Step title="Define the ontology">
+    List the entity types, relationship types, and required attributes your questions
+    need. Start small; a focused schema is easier to extract into and to query.
+  </Step>
+  <Step title="Collect sources">
+    Structured records such as account and product tables map to entities almost
+    directly. Unstructured sources such as documents, tickets, and conversations need
+    extraction.
+  </Step>
+  <Step title="Extract entities and relationships">
+    For unstructured text, the application runs an extraction pipeline: split each
+    document into chunks, ask an LLM or another extraction model to return the entities
+    and relationships it finds in a fixed format that matches the ontology, and reject
+    output that does not validate against the schema.
+  </Step>
+  <Step title="Resolve entities">
+    Decide when two mentions refer to the same thing. One ticket says "the billing
+    page" and another says "the invoices screen"; both may mean one feature. Typical
+    techniques combine exact identifiers, normalized names, embedding similarity to find
+    candidates, and rules or review to confirm a merge.
+  </Step>
+  <Step title="Record provenance">
+    Link each extracted fact to the chunk and document it came from, with the extraction
+    time and a confidence value. Provenance supports citations, audits, and later
+    corrections.
+  </Step>
+  <Step title="Load, index, and query">
+    Write entities, relationships, and provenance together, and add indexes for the
+    lookups and searches your application runs.
+  </Step>
+
+## How do you keep a knowledge graph fresh?
+
+Sources change, so a knowledge graph needs a maintenance loop, not a one-time load.
+
+- **Ingest incrementally.** Track which facts came from which source, and re-extract
+  only the documents that changed.
+- **Supersede rather than overwrite.** Mark outdated facts with validity fields such as
+  `validTo` or `isLatest`, and link a new version to the one it replaces, so history
+  stays queryable.
+- **Retract by source.** When a document is deleted or corrected, provenance tells you
+  exactly which facts to remove or re-check.
+- **Re-run entity resolution.** New mentions can reveal that two existing entities are
+  the same, or that one entity should be split.
+
+## Knowledge graphs for LLMs and RAG
+
+Retrieval-augmented generation (RAG) supplies an LLM with context before it answers.
+Retrieval based only on vector similarity returns passages that resemble the question,
+which works for lookups but struggles with questions such as "which customers reported
+problems with features in the Reports product?" The answer is spread across entities
+and relationships, not contained in one passage.
+
+A knowledge graph gives retrieval that structure. A typical flow:
+
+1. Find entry points with vector or keyword search over entity names and chunks.
+2. Expand through relationships to the connected entities the question needs.
+3. Restrict the results to what the requesting user may see.
+4. Assemble context from the facts and their provenance, so the answer can cite sources.
+
+This combination is often called GraphRAG; see
+[What is GraphRAG?](/learn/ai-memory/what-is-graphrag). LLM-extracted facts can be
+wrong, so keep confidence values and provenance, and let downstream prompts treat
+low-confidence facts accordingly.
+
+## How HelixDB stores a knowledge graph
+
+HelixDB stores data as one labeled property graph, which maps directly onto a knowledge
+graph:
+
+- **Entities and relationships.** Entities are nodes and relationships are directed
+  edges, each with exactly one label and typed properties. Because HelixDB is a
+  multigraph, two sources asserting the same relationship can be kept as separate edges
+  with their own properties.
+- **Embeddings and text on the same nodes.** Store an embedding and a text field on an
+  entity or chunk node, then add a
+  [vector index](/database/helix-db/query-guides/vector-indexes) and a
+  [text index](/database/helix-db/query-guides/text-indexes) for similarity and BM25
+  search. The application computes the embeddings; HelixDB stores and indexes them.
+- **Provenance edges.** Connect facts and entities to their source chunks and documents
+  with edges that carry properties such as confidence or extraction time. Indexes can
+  target edge properties as well as node properties.
+- **Identity and freshness.** Unique equality indexes on node labels suit canonical
+  identifiers, and equality or range indexes on fields such as `isLatest` or `validTo`
+  keep lookups scoped to current facts.
+- **Scoped retrieval.** Vector and BM25 search can be
+  [prefiltered](/database/helix-db/query-guides/prefiltering) to a traversal-defined
+  candidate set, such as documents a user can read.
+
+All entries in a write batch commit or roll back together, so an entity, its
+relationships, and their provenance are written as one unit. Start with the
+[data model](/database/helix-db/core-concepts/data-model).
+
+## Frequently asked questions
+
+### What is the difference between a knowledge graph and an ontology?
+
+The ontology is the schema: the types of entities and relationships and the rules that
+govern them. The knowledge graph is the data that follows that schema. One ontology can
+describe many knowledge graphs.
+
+### Do you need RDF to build a knowledge graph?
+
+No. RDF is one standard way to represent a knowledge graph, and it suits publishing and
+integrating data across organizations. A labeled property graph works as well and is
+common for application-facing knowledge graphs.
+
+### Can an LLM build a knowledge graph automatically?
+
+An LLM can extract candidate entities and relationships from text at scale, but the
+output needs validation against the ontology, entity resolution, and provenance. Treat
+extraction as one stage of a pipeline the application controls.
+
+### How is a knowledge graph different from a vector database?
+
+A vector database retrieves items by similarity of embeddings. A knowledge graph
+represents explicit, typed facts and how they connect. Many AI applications use both:
+vectors to find relevant starting points, and the graph to follow facts from there. See
+[What is a vector database?](/learn/vector-search/what-is-a-vector-database).
+
+## Related topics
+
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, traversals, and when a graph is the right model.
+  </Card>
+  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+    Retrieval that follows relationships, compared with vector RAG.
+  </Card>
+  <Card title="What is AI agent memory?" icon="memory" href="/learn/ai-memory/what-is-ai-agent-memory">
+    Working, episodic, and semantic memory for LLM agents.
+  </Card>
+  <Card title="Prefiltering in HelixDB" icon="filter" href="/database/helix-db/query-guides/prefiltering">
+    Run vector and BM25 search inside a traversal-defined candidate set.
+  </Card>
+
+# What is a property graph?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A property graph, often called a labeled property graph (LPG), is a graph data model in
+which data is stored as nodes and edges, where each node and edge has a label that names
+its type and a set of key-value properties that hold its data. Edges typically connect
+one source node to one target node in a fixed direction and carry their own properties,
+so a relationship such as "purchased, through the web store, with a gift note" is a
+single record. The property graph model is used by many graph databases and by the GQL
+and openCypher query languages.
+
+## What are the parts of a property graph?
+
+| Part | What it is | Example |
+| --- | --- | --- |
+| Node | An entity | A customer, an order, a product |
+| Label | The type of a node or edge | `Customer`, `PURCHASED` |
+| Property | A named, typed value on a node or edge | `email` on a customer, `channel` on a purchase |
+| Edge | A directed relationship from a source node to a target node | Customer `PURCHASED` product |
+| Edge property | Data that belongs to the relationship itself | `channel`, `giftNote`, `purchasedAt` |
+| Identity | An identifier for each node and edge, typically assigned by the database | Used to address an element directly |
+
+```mermaid
+flowchart LR
+    c["Customer<br/>email: buyer@example.com"] -->|"PURCHASED<br/>channel: web<br/>giftNote: Happy birthday"| p["Product<br/>sku: LAMP-A"]
+    c -->|"REVIEWED<br/>title: Bright enough"| p
+    p -->|IN_CATEGORY| cat["Category<br/>name: Lighting"]
+```
+
+Label rules vary by system. Depending on the database, a node may have zero, one, or
+several labels, while an edge usually has exactly one type. Edges are usually directed;
+some models, including GQL, also allow undirected edges. Direction records meaning, not
+reachability: a query can typically follow an edge forward or backward.
+
+## What is a multigraph?
+
+A multigraph allows more than one edge between the same pair of nodes. Property graphs
+are typically multigraphs, which matters because many real relationships repeat. A
+customer who buys the same product twice has two `PURCHASED` edges, each with its own
+date and channel, rather than one edge that has to summarize both.
+
+Many property graph systems also allow self-loops, edges whose source and target are the
+same node, for relationships such as a function that calls itself in a code graph or a
+web page that links to itself.
+
+## How do you model data as a property graph?
+
+A few rules of thumb cover most designs:
+
+- **Nouns become nodes.** Customers, products, documents, and tickets.
+- **Verbs become edges.** `PURCHASED`, `AUTHORED`, `REPORTED`, `MEMBER_OF`.
+- **Facts about a relationship go on the edge.** When it happened, through which
+  channel, with what confidence.
+- **Promote a relationship to a node when it needs its own relationships.** An order
+  that has line items, a payment, and a shipment is better as an `Order` node than as a
+  single edge between customer and product.
+- **Promote a property to a node when you traverse through it.** If you often ask
+  "what else is in this category?", make `Category` a node rather than a string
+  property.
+
+## Property graph vs RDF
+
+RDF (Resource Description Framework) is the other widely used graph model. It
+represents everything as triples of subject, predicate, and object, and identifies
+resources with IRIs, globally unique identifiers written as web-style addresses.
+
+| | Labeled property graph | RDF |
+| --- | --- | --- |
+| Basic unit | Nodes and edges, each with properties | Triples: subject, predicate, object |
+| Identity | Typically IDs assigned by the database | IRIs that are globally unique |
+| Types | Labels on nodes and edges | `rdf:type` statements that point to classes |
+| Attributes | Key-value properties on nodes and edges | More triples whose object is a literal value |
+| Data about a relationship | Edge properties, built in | An intermediate node, reification, or an extension such as RDF-star |
+| Repeated relationships | Separate edges between the same nodes | A graph is a set of triples, so each distinct triple appears once |
+| Schema | Often optional or system-specific | RDFS and OWL vocabularies, with SHACL for validation |
+| Query language | GQL, openCypher, Gremlin | SPARQL |
+| Standards body | ISO for GQL | W3C |
+
+Here is one purchase with data on the relationship, first as a property graph:
+
+```text
+(:Customer {email: "buyer@example.com"})
+  -[:PURCHASED {channel: "web", giftNote: "Happy birthday"}]->
+(:Product {sku: "LAMP-A"})
+```
+
+and then in RDF, using Turtle syntax with prefix declarations omitted, where the
+purchase becomes its own resource so it can hold the channel and note:
+
+```text
+ex:customerA  a  ex:Customer ;
+    ex:email  "buyer@example.com" .
+
+ex:productA  a  ex:Product ;
+    ex:sku  "LAMP-A" .
+
+ex:purchaseA  a  ex:Purchase ;
+    ex:buyer     ex:customerA ;
+    ex:item      ex:productA ;
+    ex:channel   "web" ;
+    ex:giftNote  "Happy birthday" .
+```
+
+Neither form is wrong. The property graph keeps the relationship compact and makes
+traversal the natural operation. RDF makes every statement addressable with global
+identifiers, which pays off when data from many sources must merge cleanly.
+
+## When should you use a property graph or RDF?
+
+A labeled property graph usually fits when:
+
+- The graph backs an application, and developers query it directly.
+- Relationships carry data, repeat, or change often.
+- Queries are traversal-heavy: paths, neighborhoods, and multi-hop filters.
+
+RDF usually fits when:
+
+- You publish or consume linked data that other organizations will reference.
+- Data from many independent sources must merge on shared global identifiers.
+- You rely on standard vocabularies, formal ontologies, or OWL-based inference.
+
+The models can be converted. Mapping RDF to a property graph typically turns resources
+into nodes, literal-valued predicates into properties, and resource-valued predicates
+into edges, with conventions for anything that does not map one-to-one.
+
+## How HelixDB implements the property graph model
+
+HelixDB stores all data as one labeled property graph:
+
+- **Exactly one label** on every node and edge. Model a secondary role as a property or
+  as a relationship to another node rather than as an extra label.
+- **Typed properties** on nodes and edges: null, boolean, integer, float, date-time,
+  string, bytes, arrays, and nested objects.
+- **Directed edges in a multigraph.** Several edges can connect the same pair of nodes,
+  and an edge can connect a node to itself.
+- **Separate ID spaces.** Node and edge IDs come from separate 64-bit sequences, so an ID
+  is unique only within its own space.
+- **Indexable top-level properties.** Only top-level properties can be indexed, so keep
+  a field you filter or search on at the top level.
+- **Indexes on nodes or edges.** Secondary indexes for equality, unique equality (node
+  labels only), and range lookups; BM25 text indexes; and vector indexes can all target
+  edge labels as well as node labels.
+
+Queries are built with typed SDKs in Rust, TypeScript, Go, and Python. See the
+[data model](/database/helix-db/core-concepts/data-model) and
+[traversals](/database/helix-db/query-guides/traversals).
+
+## Frequently asked questions
+
+### What does "labeled" mean in labeled property graph?
+
+It means every node and edge carries a label that names its type, such as `Customer` or
+`PURCHASED`. Labels group elements so queries and indexes can target one kind of node or
+relationship at a time.
+
+### Can an edge have properties?
+
+Yes. Edge properties are a defining feature of the property graph model. They hold data
+that belongs to the relationship, such as when it started, its weight, or its source.
+
+### Is a property graph the same as a knowledge graph?
+
+No. A property graph is a data model; a knowledge graph is a body of facts organized by
+an ontology. A knowledge graph can be stored as a property graph or as RDF. See
+[What is a knowledge graph?](/learn/graph-databases/what-is-a-knowledge-graph).
+
+### Which query languages work with property graphs?
+
+GQL (ISO/IEC 39075) is the ISO standard. openCypher and Gremlin are widely used, and
+SQL/PGQ adds property graph queries to SQL. Some databases, including HelixDB, use typed
+SDK builders instead of a text language.
+
+## Related topics
+
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, traversals, and when a graph is the right model.
+  </Card>
+  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+    Entities, relationships, and provenance for search and LLMs.
+  </Card>
+  <Card title="HelixDB data model" icon="book" href="/database/helix-db/core-concepts/data-model">
+    Labels, properties, multigraph edges, and indexes in HelixDB.
+  </Card>
+  <Card title="Secondary indexes" icon="list" href="/database/helix-db/query-guides/secondary-indexes">
+    Equality, unique, and range lookups on nodes and edges.
+  </Card>
+
+# What is vector search?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+Vector search is a retrieval method that represents items and queries as embeddings,
+arrays of numbers produced by a machine learning model, and returns the items whose
+embeddings are closest to the query's embedding. Because an embedding model places
+inputs with similar meaning near each other, a query for "login failure" can find a
+support ticket titled "can't sign in to my account" even though the two share no
+words, which is why vector search is often called semantic search. Large collections
+are usually searched with an approximate nearest neighbor index, which gives up a small
+amount of accuracy in exchange for much lower latency.
+
+## How does semantic search work?
+
+A vector search system has an indexing path and a query path, and both must use the
+same embedding model.
+
+```mermaid
+flowchart LR
+    items["Documents, products,<br/>support tickets"] --> model1["Embedding model"]
+    model1 --> index["Stored vectors<br/>and vector index"]
+    query["Query text"] --> model2["Same embedding model"]
+    model2 --> qv["Query vector"]
+    qv --> search["Nearest neighbor search"]
+    index --> search
+    search --> topk["Top k results"]
+```
+
+1. **Embed the collection.** Each item, or each chunk of a long document, passes
+   through an embedding model that outputs one vector.
+2. **Store and index the vectors.** Each vector is saved with an ID and usually some
+   metadata, then organized into an index built for nearest neighbor search.
+3. **Embed the query** with the same model.
+4. **Find the nearest neighbors.** The system compares the query vector with stored
+   vectors using a distance metric and returns the `k` closest, called the top k.
+5. **Use the results.** The application displays them, reranks them, or passes them
+   to a language model as context in retrieval-augmented generation (RAG).
+
+## What are embeddings?
+
+An embedding is a fixed-length list of floating-point numbers that encodes an input as
+a point in a high-dimensional space. Text embedding models typically produce vectors
+with hundreds to a few thousand dimensions. Individual dimensions rarely mean anything
+on their own; what matters is how close vectors are.
+
+A few properties shape every vector search design:
+
+- **Embeddings are model-specific.** Vectors from two different models, or from two
+  versions of one model, are not comparable. Changing models means re-embedding the
+  collection.
+- **The dimension is fixed.** Every vector from a given model has the same length, and
+  an index is typically built for exactly one length.
+- **Many input types can be embedded.** Text, images, audio, and code all have
+  embedding models.
+- **Long inputs are usually chunked.** One vector can only summarize so much, so long
+  documents are split into passages and each passage is embedded separately.
+
+Closeness is computed with a distance or similarity function such as cosine
+similarity, Euclidean distance, dot product, or Manhattan distance. The right choice is
+usually the one the embedding model was trained with; see
+[vector distance metrics](/learn/vector-search/vector-distance-metrics).
+
+## Exact vs approximate nearest neighbor search
+
+Exact nearest neighbor search, also called k-nearest neighbor (kNN) or brute-force
+search, compares the query with every stored vector, so it always returns the true top
+k at a cost that grows linearly with the collection. Approximate nearest neighbor (ANN)
+search uses an index to examine a small, promising fraction of the vectors: much faster
+at scale, but it can occasionally miss a true neighbor.
+
+| | Exact (kNN) | Approximate (ANN) |
+| --- | --- | --- |
+| Work per query | Compares every vector | Compares a small fraction |
+| Result quality | Always the true top k | Usually most of the true top k |
+| Index | Not required | Built and maintained alongside the data |
+| Typical fit | Small collections, small filtered subsets | Large collections |
+
+## How do HNSW and IVF indexes work?
+
+**HNSW** (Hierarchical Navigable Small World) is a graph-based ANN index. Each vector
+becomes a node linked to some of its near neighbors, and nodes are arranged in layers:
+upper layers are sparse and hold long-range links, while the bottom layer holds every
+vector. A search enters at the top layer, greedily moves to neighbors closer to the
+query, and descends layer by layer. A query-time parameter, often called `ef`, sets how
+many candidates the search keeps in play; a larger value explores more of the graph,
+raising both recall and latency.
+
+**IVF** (inverted file) indexes partition the collection instead. A clustering step,
+usually k-means, chooses a set of centroids, and each vector is filed under its nearest
+centroid. A query is compared with the centroids first, and only the lists belonging
+to the closest few, a number often called `nprobe`, are scanned. IVF is often paired
+with quantization, which compresses vectors to save memory at some cost in precision.
+
+## Recall, latency, and top-k
+
+**Recall** measures how closely an ANN search matches exact search. Recall@k is the
+fraction of the true k nearest neighbors, as found by exact search, that the ANN search
+returned. A recall of 0.9 at k = 10 means that, on average, nine of the ten true
+nearest neighbors were found.
+
+Most ANN indexes expose a setting that trades recall for **latency**: search more of
+the index and you find more true neighbors, but each query takes longer.
+
+**Top-k** is how many results a query asks for. In RAG, k is usually bounded by how
+much context the language model can use, and many pipelines retrieve a larger k and
+rerank it down to a smaller set.
+
+Recall is measured against exact search over the same vectors, not against what a
+user considers relevant. A search with perfect recall can still return poor results if
+the embedding model or the chunking does not capture what the user meant.
+
+## When does vector search fail?
+
+Vector search is good at paraphrase and fuzzy meaning. It is weak where exact
+characters or the structure of the data matter:
+
+- **Exact identifiers.** Order numbers, SKUs, error codes, and email addresses carry
+  little semantic meaning, so a query for one ID can rank a different, similar-looking
+  ID first.
+- **Names and rare tokens.** New product names, internal jargon, and uncommon surnames
+  may be poorly represented in the model's training data.
+- **Hard constraints.** Dates, prices, ownership, and permissions are conditions to
+  enforce, not similarities to score. "Tickets from last week" is a filter.
+- **Relationships.** "Documents written by people on my team" depends on who is
+  connected to whom, which an embedding does not encode.
+
+Keyword search with [BM25](/learn/full-text-search/what-is-bm25) handles exact terms
+and rare tokens well, and many systems combine the two in
+[hybrid search](/learn/full-text-search/hybrid-search). Hard constraints belong in a
+filter that runs before or during ranking, as described in
+[filtered vector search](/learn/vector-search/filtered-vector-search).
+
+## How HelixDB does vector search
+
+HelixDB is an open-source graph database with native vector search and BM25 full-text
+search. The application computes embeddings; HelixDB stores them as properties on
+nodes or edges and indexes them.
+
+- A vector index covers one label and one top-level property, with a fixed dimension
+  and one distance metric: cosine, Euclidean, or Manhattan.
+- Search uses approximate nearest neighbor search, and the documentation states over
+  90% recall.
+- Search can run inside an exact candidate set defined by a graph traversal, such as
+  the documents a user can read.
+- Graph traversals, vector search, and text search run in the same ACID transaction.
+  HelixDB has no built-in rank fusion, so the application combines vector and BM25
+  results.
+
+See [vector indexes](/database/helix-db/query-guides/vector-indexes) and
+[prefiltered search](/database/helix-db/query-guides/prefiltering) for working queries.
+
+## Frequently asked questions
+
+### Is vector search the same as semantic search?
+
+Mostly. Semantic search names the goal, finding results by meaning, and vector search
+over embeddings is the most common way to implement it.
+
+### Do I need an index to run vector search?
+
+Not for small collections. Comparing a query exhaustively against a few thousand
+vectors is usually fast enough. An ANN index becomes worthwhile when exhaustive search
+no longer fits your latency budget.
+
+### Can vector search find an exact product code or ID?
+
+Not reliably. Embeddings capture meaning, and identifiers carry little of it. Use an
+equality lookup or keyword search for identifiers, and combine it with vector search
+when queries mix exact terms and natural language.
+
+### What value of k should I use?
+
+It depends on what consumes the results. A search page might show ten items, while a
+RAG pipeline might retrieve a few dozen passages and rerank them down to what fits in
+the model's context.
+
+## Related topics
+
+  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+    What a vector database stores and when you need one.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Restrict results by metadata, permissions, or graph membership.
+  </Card>
+  <Card title="Vector distance metrics" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+    Cosine, Euclidean, Manhattan, and dot product compared.
+  </Card>
+  <Card title="Hybrid search" icon="layer-group" href="/learn/full-text-search/hybrid-search">
+    Combine vector search with keyword search.
+  </Card>
+  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+    Create a vector index and run nearest neighbor search in HelixDB.
+  </Card>
+  <Card title="Prefiltered search" icon="route" href="/database/helix-db/query-guides/prefiltering">
+    Rank only the nodes or edges a traversal reaches.
+  </Card>
+
+# What is a vector database?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A vector database is a database that stores embeddings, the numeric vectors produced by
+machine learning models, together with IDs and metadata, and indexes them so it can
+quickly return the vectors closest to a query vector. It supplies what nearest neighbor
+search needs in production: durable storage, an approximate nearest neighbor index,
+updates and deletes, and filtering. The term covers both dedicated systems built only
+for vectors and general-purpose databases that support vector indexes.
+
+## What does a vector database store?
+
+Each record typically combines four parts.
+
+| Part | Example | Purpose |
+| --- | --- | --- |
+| ID | `doc-4821#chunk-3` | Links the vector back to its source |
+| Vector | An array of hundreds of floats | Similarity search |
+| Metadata | Tenant, document type, created date | Filtering and display |
+| Content (optional) | The chunk's text | Returned to the application or a language model |
+
+## What does a vector database do?
+
+- **Writes.** Inserts, updates, and deletes vectors while keeping the index current.
+- **Indexing.** Builds an approximate nearest neighbor index, such as HNSW or IVF, so a
+  query does not compare against every vector. See
+  [What is vector search?](/learn/vector-search/what-is-vector-search)
+- **Similarity queries.** Takes a query vector and a number `k` and returns the `k`
+  closest records with their distances or scores.
+- **Filtering.** Restricts results by metadata, such as a tenant or a date range.
+- **Durability and scale.** Persists data, recovers from failures, and serves
+  concurrent queries.
+
+## Do I need a vector database?
+
+Not always. The answer depends on collection size, how often data changes, and where
+the source data already lives.
+
+- **Probably not** for a small, static collection. A few thousand vectors held in
+  memory can be searched exhaustively, and a prototype rarely needs more.
+- **Probably yes** when exhaustive search no longer meets your latency budget, when
+  vectors change often, or when you need filters, durability, and concurrent access.
+- **Maybe not a separate one** if your existing database supports vector indexes.
+  Keeping vectors next to their source data removes a synchronization pipeline.
+
+## Where vector-only storage falls short
+
+A vector captures what a piece of content is about. It does not capture:
+
+- **Relationships.** Which chunk came from which document, which ticket belongs to
+  which customer, which document cites which.
+- **Ownership and permissions.** Who may see a record, often derived from team or
+  group membership.
+- **Recency and lifecycle.** Which version is current, and what was superseded or
+  deleted.
+- **Provenance.** Where a fact came from and which source to cite.
+
+Vector stores usually approximate these by copying fields into each vector's metadata.
+That works for flat, stable attributes such as a tenant ID or a document type. It works
+poorly for facts derived from relationships that change, such as group membership,
+sharing, or version history: one change can require rewriting metadata on many
+vectors.
+
+### The synchronization problem
+
+When vectors live in a different system from the source data, every change must be
+written twice, typically through a pipeline that detects changes, calls the embedding
+model, and writes to the vector store. Common failure modes:
+
+- **Stale vectors.** A document is edited, but search still matches its old content.
+- **Orphaned vectors.** A document is deleted, but its chunks remain retrievable.
+- **Permission lag.** Access is revoked in the source system, but copied metadata
+  still grants it until the next sync.
+- **No shared transaction.** A query cannot read both systems at one consistent point
+  in time, so joins between them can disagree.
+
+## Vector database vs graph database vs search engine
+
+The three answer different questions, and many systems now combine two or more of
+them.
+
+| | Vector database | Graph database | Full-text search engine |
+| --- | --- | --- | --- |
+| Question it answers | What is similar in meaning? | How are things connected? | Which documents contain these terms? |
+| Core structure | Vectors and an ANN index | Nodes, edges, and properties | Inverted index over tokens |
+| Ranking | Distance between vectors | Traversal and path logic | Term statistics such as BM25 |
+| Weak at | Exact terms, relationships | Fuzzy meaning, unless it supports vectors | Paraphrase and synonyms |
+
+See [What is a graph database?](/learn/graph-databases/what-is-a-graph-database) and
+[What is full-text search?](/learn/full-text-search/what-is-full-text-search) for the
+other two.
+
+## Vector databases for RAG
+
+In retrieval-augmented generation (RAG), a retriever finds passages to include in a
+language model's prompt, and vector search is the usual retriever. A production
+retriever typically needs more than similarity:
+
+- **Permission filtering** before results reach the model, because anything retrieved
+  can appear in the answer. See
+  [filtered vector search](/learn/vector-search/filtered-vector-search).
+- **Freshness**, so edited or deleted sources do not come back.
+- **Provenance**, so each passage can be traced to a source and cited.
+- **Exact term matching** for names and IDs, often through
+  [hybrid search](/learn/full-text-search/hybrid-search).
+- **Related context**, such as expanding a chunk to its document, author, or linked
+  entities, as in [GraphRAG](/learn/ai-memory/what-is-graphrag).
+
+## Dedicated vector store vs vectors inside a general database
+
+| | Dedicated vector store | Vectors inside a general database |
+| --- | --- | --- |
+| Where vectors live | A separate system | Next to the source records |
+| Keeping in sync | A pipeline copies changes | Written with the record, in one transaction where supported |
+| Filters | Metadata copied onto vectors | Conditions over the live data |
+| Operations | One more system to run and secure | One system |
+| Typical fit | Search isolated from other application data | Retrieval that depends on relationships, permissions, or transactional data |
+
+Neither is right for every workload. The deciding question is usually how much your
+retrieval depends on data that lives elsewhere.
+
+## How HelixDB stores vectors
+
+HelixDB is an open-source graph database with native vector search and BM25 full-text
+search, so vectors live inside the graph rather than in a separate store.
+
+- An embedding is a property on a node or an edge, next to that entity's other
+  properties and relationships. The application computes embeddings; HelixDB stores
+  and indexes them.
+- A vector index covers one label and one top-level property, with a fixed dimension
+  and cosine, Euclidean, or Manhattan distance. Indexes can be partitioned by tenant.
+- Each request is one ACID transaction. A write batch that creates a document, its
+  embedding, and its edges commits or rolls back as a unit, and vector search runs in
+  the same transaction as graph traversals.
+- Relationships such as ownership and provenance are edges, so a vector search can be
+  restricted to an exact candidate set defined by a traversal.
+
+See the [data model](/database/helix-db/core-concepts/data-model),
+[vector indexes](/database/helix-db/query-guides/vector-indexes), and
+[prefiltered search](/database/helix-db/query-guides/prefiltering).
+
+## Frequently asked questions
+
+### Is a vector database the same as a vector index?
+
+No. A vector index is a data structure, such as HNSW or IVF, that speeds up nearest
+neighbor search. A vector database wraps one or more indexes with storage, updates,
+filtering, durability, and a query interface.
+
+### Can a graph database be used as a vector database?
+
+Yes, if it supports vector indexes. Embeddings then become properties on nodes or
+edges, and one query can combine similarity with relationships, such as ranking only
+the documents attached to a given project.
+
+### Do I need a vector database for RAG?
+
+You need vector search if your retriever uses embeddings, but not necessarily a
+dedicated system. Small corpora can be searched exhaustively in memory. For larger
+ones, any database with vector indexes and the filters your permissions require will
+work.
+
+### What happens to vectors when the source document changes?
+
+The old vector no longer represents the content, so it must be recomputed and
+replaced. With a separate vector store, that depends on a sync pipeline; with vectors
+stored on the record, the update can be part of the same write.
+
+## Related topics
+
+  <Card title="What is vector search?" icon="magnifying-glass" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, nearest neighbor search, and ANN indexes.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Why filtering before ranking matters for correctness.
+  </Card>
+  <Card title="One database for graph, vector, and text" icon="layer-group" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+    The case for keeping retrieval in one transactional system.
+  </Card>
+  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+    Create a vector index in HelixDB.
+  </Card>
+
+# What is filtered vector search?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+Filtered vector search is nearest neighbor search restricted to the items that satisfy a
+condition, such as a tenant ID, a date range, or "documents this user can read." The
+correct answer is the `k` closest items among those that pass the filter. Systems
+differ in when they apply the filter: after ranking (post-filtering), before ranking
+(pre-filtering), or during the index search. That choice decides whether a query
+returns the true top k, fewer than k results, or nothing at all.
+
+## Why is filtering hard for vector indexes?
+
+An approximate nearest neighbor (ANN) index is organized by vector proximity, not by
+metadata. The items that pass a filter are scattered across it. A secondary index can
+list every document in a tenant, but it cannot rank them by distance; a vector index
+can rank by distance, but it does not know which items pass. Filtered search has to
+combine the two.
+
+The key quantity is **selectivity**: the fraction of the collection that passes the
+filter. Naive approaches work when most items pass and break down when few do, which
+is exactly the case for per-user permissions.
+
+## Post-filtering: search, then filter
+
+Post-filtering runs an ordinary top-k vector search over the whole index, then removes
+results that fail the filter. It is simple and works with any vector store.
+
+The flaw is that the filter runs after `k` is spent. Removed results are not replaced,
+so a query that asks for 10 can return 3, or 0. If the filter passes 2% of the
+collection, on average only 2% of the top k survive.
+
+The usual workaround is overfetching: request a much larger k, then filter. The k you
+need grows as the filter gets more selective, many systems cap how large k can be, and
+no value short of the whole collection guarantees k eligible results.
+
+## Pre-filtering: filter, then search
+
+Pre-filtering first computes the set of eligible items, from a metadata index, an
+access control list, or a graph traversal, and then ranks only that set. It returns k
+results whenever at least k items qualify, and every result passes the filter.
+
+The cost moves to the candidate set: small sets can be ranked exactly and cheaply,
+while large sets typically need index-assisted ranking.
+
+## Filtering during the index search
+
+Some systems apply the filter while walking the index, an approach sometimes called
+in-filtering or filtered graph search. In a graph-based index such as HNSW, the search
+may pass through non-matching nodes to navigate but only collects matching ones, and
+keeps going until it has k matches or exhausts its search budget.
+
+This works well at moderate selectivity. When very few items pass, matching items can
+be far apart in the graph, the search must visit many nodes, and recall can drop. Many
+implementations detect highly selective filters and fall back to exact search over the
+filtered set.
+
+## How the approaches compare
+
+```mermaid
+flowchart LR
+    subgraph post["Post-filtering"]
+        direction TB
+        a1["Search whole index"] --> a2["Top k of all items"]
+        a2 --> a3["Drop ineligible items"]
+        a3 --> a4["0 to k results"]
+    end
+    subgraph pre["Pre-filtering"]
+        direction TB
+        b1["Build eligible set"] --> b2["Rank eligible items"]
+        b2 --> b3["Top k of eligible items"]
+        b3 --> b4["min(k, eligible) results"]
+    end
+```
+
+| | Post-filtering | Pre-filtering | Filtering during search |
+| --- | --- | --- | --- |
+| Order | Rank, then filter | Filter, then rank | Filter while ranking |
+| Results returned | 0 to k, often fewer than k | k, unless fewer items qualify | Usually k; can degrade on very selective filters |
+| True top k among eligible items? | Only if enough survive | Yes, up to ranking approximation | Approximately |
+| Weak spot | Selective filters | Very large candidate sets | Very selective filters |
+| Filter expressiveness | Anything the application can check | Anything that produces a set | Usually per-item metadata |
+
+## Worked example: 1,000 documents, 20 readable, k = 10
+
+A knowledge base holds 1,000 documents, and a user can read 20 of them. The user asks
+a question, and the application wants the 10 closest readable documents.
+
+**Post-filtering** retrieves the 10 nearest of all 1,000. If readable documents are no
+more likely than others to be near the query, each result has a 2% chance of being
+readable, so the query returns 0.2 readable documents on average, and most queries
+return none. The user's relevant documents are outranked by documents they cannot
+open.
+
+**Pre-filtering** builds the set of 20 readable documents, ranks those 20, and returns
+the closest 10. Every query returns 10 results, all readable, and they are the true top
+10 among what the user can see.
+
+| Approach | Items ranked | Readable results returned |
+| --- | --- | --- |
+| Post-filter, k = 10 | 1,000 | 0.2 on average |
+| Post-filter, k = 100 | 1,000 | 2 on average |
+| Post-filter, k = 500 | 1,000 | 10 on average, not guaranteed |
+| Pre-filter, k = 10 | 20 | 10, every time |
+
+To expect 10 survivors, post-filtering has to fetch half the collection.
+
+## Why does my filtered vector search return fewer than k results?
+
+1. **The filter runs after ranking.** Ineligible items consumed the top k. Filter
+   before or during the search instead.
+2. **Fewer than k items pass the filter.** Then fewer than k results is correct.
+3. **A filtered index search ran out of budget.** On a very selective filter, raise
+   the search budget or rank the filtered set exactly.
+4. **A cap or threshold applied.** Many systems limit the maximum k or drop results
+   below a similarity threshold.
+5. **Some items have no vector yet.** Records that were never embedded, or not yet
+   indexed, cannot be returned.
+
+## Correctness vs approximation
+
+Filtered search can make two kinds of error, and they are not equally acceptable.
+
+- **Ranking approximation.** An ANN index can miss one of the true nearest eligible
+  items and return the eleventh closest instead. The cost is slightly lower relevance,
+  measured as recall.
+- **Membership error.** A result that fails the filter. For a permission filter, that
+  is a data leak, and no rate of it is acceptable.
+
+A sound design allows the first and forbids the second: approximate ranking, exact
+membership.
+
+## Filtered search as a permission boundary in RAG
+
+In retrieval-augmented generation, anything the retriever returns can end up in the
+model's answer, and a language model cannot be relied on to withhold it. The
+permission check therefore belongs in retrieval, before generation.
+
+- **Enforce permissions in the retrieval query**, not in prompt instructions.
+- **Filter before ranking**, so authorized users still get complete results.
+- **Evaluate permissions against current data.** Copying access lists into vector
+  metadata creates a second copy that can lag behind revocations.
+- **Keep permissions in their natural shape.** "User is a member of a group that can
+  read a folder that contains a document" is a chain of relationships. Flattening it
+  onto every vector means rewriting many vectors when one membership changes.
+
+## How HelixDB filters vector search
+
+HelixDB uses traversal-scoped prefiltering. A graph traversal defines an exact
+candidate set, such as the documents reachable from a user through membership and
+sharing edges, and vector search ranks only that set.
+
+- Every prefiltered search runs in the same order: graph traversal, exact candidate
+  membership, ranking, top k.
+- A result outside the candidate set is never returned, even when approximate index
+  structures accelerate ranking.
+- The traversal and the search run in one ACID transaction over a committed snapshot,
+  so the candidate set and the vectors reflect the same state.
+- BM25 full-text search supports the same prefiltering, and vector and text indexes
+  can be partitioned by tenant, with a separate index per tenant value.
+- A search accepts up to 1,000,000 unique candidates and returns at most 800 results.
+
+See [prefiltered search](/database/helix-db/query-guides/prefiltering) for working
+queries.
+
+## Frequently asked questions
+
+### Can I fix post-filtering by increasing k?
+
+Partly. Overfetching raises the chance that enough eligible items survive, but the k
+you need grows as the filter tightens, and no k short of the whole collection
+guarantees a full result. It also ranks many items only to discard them.
+
+### Is pre-filtering slower than post-filtering?
+
+Not necessarily. Ranking a small eligible set exactly can be cheaper than searching a
+full index. Cost depends mostly on the size of the candidate set and how it is
+computed.
+
+### Should I use a separate index per tenant?
+
+Partitioning an index by tenant enforces the tenant boundary structurally, because a
+search only reads that tenant's partition. It does not handle finer rules inside a
+tenant, such as per-user sharing, which still need a filter or a traversal.
+
+### What is the difference between a metadata filter and a traversal filter?
+
+A metadata filter tests fields stored on each item, such as `tenant = "tenant-42"`. A
+traversal filter defines eligibility through relationships, such as documents in
+folders shared with the user's groups. Traversal filters express multi-hop access rules
+without copying them onto every vector.
+
+## Related topics
+
+  <Card title="What is vector search?" icon="magnifying-glass" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, ANN indexes, recall, and top-k.
+  </Card>
+  <Card title="Hybrid search" icon="layer-group" href="/learn/full-text-search/hybrid-search">
+    Combine filtered vector and keyword results.
+  </Card>
+  <Card title="Prefiltered search" icon="filter" href="/database/helix-db/query-guides/prefiltering">
+    Run traversal-scoped vector and BM25 search in HelixDB.
+  </Card>
+  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+    Build candidate sets by following relationships.
+  </Card>
+
+# Cosine vs Euclidean vs Manhattan distance
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A distance metric is the formula a vector search uses to decide how close two embeddings
+are. Cosine distance compares direction and ignores length, Euclidean distance measures
+the straight-line gap between two points, and Manhattan distance sums the gap along each
+dimension. The right choice is usually the metric your embedding model was trained for,
+which its provider normally documents.
+
+## The three metrics
+
+For two vectors `a` and `b` with `n` dimensions:
+
+```text
+cosine similarity   = (a · b) / (|a| × |b|)
+cosine distance     = 1 − cosine similarity
+
+Euclidean (L2)      = sqrt( Σ (aᵢ − bᵢ)² )
+
+Manhattan (L1)      = Σ |aᵢ − bᵢ|
+
+dot product         = Σ aᵢ × bᵢ
+```
+
+| Metric | Measures | Sensitive to vector length? | Typical use |
+| --- | --- | --- | --- |
+| Cosine | The angle between vectors | No | Text and sentence embeddings |
+| Euclidean (L2) | Straight-line distance | Yes | Embeddings where magnitude carries meaning, image and spatial features |
+| Manhattan (L1) | Sum of per-dimension differences | Yes | Sparse or high-dimensional features where large single-dimension gaps should not dominate |
+| Dot product | Alignment scaled by length | Yes | Models trained to score with an inner product |
+
+Similarity and distance point in opposite directions: a higher cosine similarity means
+a smaller cosine distance. Search systems usually sort by distance, closest first.
+
+## A worked example
+
+Take a query vector `a = (1, 0)` and two stored vectors, `b = (0.6, 0.8)` and
+`c = (2, 0)`.
+
+| Pair | Cosine similarity | Euclidean | Manhattan |
+| --- | --- | --- | --- |
+| `a`, `b` | 0.6 | 0.894 | 1.2 |
+| `a`, `c` | 1.0 | 1.0 | 1.0 |
+| Nearest to `a` | `c` | `b` | `c` |
+
+`c` points in exactly the same direction as `a` but is twice as long. Cosine ignores
+the length, so `c` is a perfect match. Euclidean counts the extra length as distance,
+so `b` wins. The metrics disagree because the vectors have different lengths.
+
+## When do the metrics agree?
+
+When every vector is normalized to unit length, cosine and Euclidean distance produce
+the same ranking. For unit vectors, the squared Euclidean distance equals
+`2 − 2 × cosine similarity`, so ordering by one orders by the other. The dot product of
+unit vectors also equals their cosine similarity.
+
+Manhattan distance does not have this property: it can rank normalized vectors
+differently from cosine and Euclidean distance.
+
+Many embedding models return normalized vectors. If yours does, cosine is a safe
+default, and switching to Euclidean distance would not change the order of results.
+
+## How to choose a distance metric
+
+1. **Use the metric the embedding model was trained for.** Model documentation usually
+   says whether to compare its embeddings with cosine similarity, dot product, or
+   Euclidean distance. Matching it gives the rankings the model was optimized to
+   produce.
+2. **Check whether the vectors are normalized.** If they are, cosine, Euclidean, and dot
+   product rank results the same way, and the choice matters little.
+3. **Keep one metric per index.** Every vector in an index, and every query vector, must
+   come from the same model and be compared with the same metric. Changing the model or
+   metric means re-embedding and rebuilding the index.
+4. **Evaluate on your own queries.** When in doubt, measure recall and relevance on a
+   sample of real questions with each candidate metric.
+
+## How HelixDB supports distance metrics
+
+Each HelixDB [vector index](/database/helix-db/query-guides/vector-indexes) declares one
+metric, cosine, Euclidean, or Manhattan, and a fixed dimension. Every stored embedding
+and every query vector must match that dimension exactly.
+
+- **Results come back closest first.** Hits carry a `$distance` value that you can
+  return in a projection.
+- **Cosine needs a non-zero vector.** A cosine vector with zero length has no direction,
+  so HelixDB rejects it with the `zero_norm_cosine_vector` error code.
+- **Dot product is not a separate metric.** For a model that recommends dot product on
+  normalized embeddings, use cosine, which ranks those vectors the same way.
+
+The application computes embeddings, and HelixDB stores and indexes them on nodes or
+edges. See [What is vector search?](/learn/vector-search/what-is-vector-search) for how
+nearest-neighbor search works.
+
+## Frequently asked questions
+
+### Is cosine similarity better than Euclidean distance?
+
+Neither is better in general. Cosine compares direction only, which suits most text
+embeddings. Euclidean distance also accounts for length. For normalized vectors they
+rank results identically.
+
+### Should I normalize my embeddings?
+
+Normalize when your model's documentation recommends it or when you want vector length
+to stop influencing results. After normalization, cosine, Euclidean, and dot product
+give the same ordering.
+
+### When is Manhattan distance useful?
+
+Manhattan distance adds up absolute differences per dimension, so one very large
+difference affects it less than it affects Euclidean distance. It is sometimes preferred
+for sparse or very high-dimensional features. Test it against your own data before
+choosing it.
+
+### What is the difference between dot product and cosine similarity?
+
+Cosine similarity is the dot product divided by both vectors' lengths. For unit-length
+vectors they are equal. For vectors of different lengths, the dot product also rewards
+longer vectors.
+
+## Related topics
+
+  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, nearest neighbors, and approximate search.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Return the right top k when results must match a filter.
+  </Card>
+  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+    What a vector store does and where vector-only storage falls short.
+  </Card>
+  <Card title="HelixDB vector indexes" icon="code" href="/database/helix-db/query-guides/vector-indexes">
+    Create a vector index and run nearest-neighbor search.
+  </Card>
+
+# What is full-text search?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+Full-text search is a way of finding documents by the words they contain and ranking
+them by how well they match a query. A search engine breaks each document into
+normalized terms, records which documents contain each term in an inverted index, and
+at query time looks up the query's terms and scores the matching documents with a
+relevance function such as BM25. The result is a ranked list, not a yes-or-no filter.
+
+## How does full-text search work?
+
+Most full-text search systems follow the same four stages, whether they index support
+tickets, product descriptions, or chat transcripts.
+
+  <Step title="Analyze">
+    An analyzer turns raw text into a list of terms: it splits the text into tokens,
+    then normalizes them, for example by lowercasing or stemming.
+  </Step>
+  <Step title="Index">
+    Each term is added to an inverted index that maps the term to the documents that
+    contain it.
+  </Step>
+  <Step title="Query">
+    The query string goes through the same analyzer, and the engine looks up each
+    resulting term in the index to collect candidate documents.
+  </Step>
+  <Step title="Rank">
+    A scoring function assigns every candidate a relevance score, and the engine
+    returns the top results.
+  </Step>
+
+The key idea is that the expensive work happens at write time. At query time the
+engine reads a few short lists instead of scanning every document.
+
+## What is an inverted index?
+
+An inverted index is a map from each term to the list of documents that contain it.
+That list is called a postings list. Take three short support tickets:
+
+- Ticket 1: "Reset your password from the login page"
+- Ticket 2: "The login page shows an error"
+- Ticket 3: "Password rules for new accounts"
+
+After lowercasing and dropping a few common words, part of the index looks like this:
+
+```text
+term        postings (ticket IDs)
+password    1, 3
+login       1, 2
+page        1, 2
+error       2
+reset       1
+accounts    3
+```
+
+A query for "login error" reads two postings lists, `login -> 1, 2` and
+`error -> 2`, and immediately knows that only tickets 1 and 2 can match. Postings
+typically also store how often the term appears in each document, which ranking
+needs. Many systems can store term positions too, which make phrase queries such as
+`"login page"` and proximity scoring possible.
+
+## Tokenization, stemming, and stop words
+
+The analyzer decides what counts as a match, so it matters as much as the index.
+
+| Step | What it does | Example |
+| --- | --- | --- |
+| Tokenization | Splits text into tokens, usually on whitespace and punctuation | `"log-in failed!"` becomes `log`, `in`, `failed` |
+| Normalization | Makes equivalent tokens identical, most often by lowercasing | `Login` and `LOGIN` both become `login` |
+| Stemming | Strips suffixes so word forms share one term | `connecting`, `connected`, `connects` become `connect` |
+| Stop words | Removes very common words that carry little meaning | `the`, `a`, `of` are dropped |
+
+Normalization and stemming usually raise recall at some cost to precision. Stemming
+lets "connected" match "connection issues," but an aggressive stemmer can also merge
+unrelated words. Removing stop words
+shrinks the index but can break phrase queries where those words matter, so many
+modern systems keep stop words and let ranking give them little weight.
+
+Documents and queries must use the same analyzer. If documents are stemmed and queries
+are not, a search for "connecting" looks up a term that was never indexed.
+
+## Full-text search vs LIKE queries
+
+A SQL `LIKE '%password%'` predicate is pattern matching, not search.
+
+| | `LIKE` pattern matching | Full-text search |
+| --- | --- | --- |
+| Lookup | A leading wildcard usually forces a scan of every row | Reads postings lists from an inverted index |
+| Matching | Raw substrings, so `'%pass%'` matches `compass` | Whole analyzed terms |
+| Word forms | `'%connected%'` does not match `connecting` | Stemming can match both |
+| Ranking | None; a row matches or it does not | Rows are ordered by relevance score |
+| Multiple words | Needs one predicate per word | Scores all query terms together |
+
+`LIKE` is fine for small tables, prefix lookups, and structured codes. Once users type
+free-form queries over a large collection, you need both an index and a ranking.
+
+## How are full-text results ranked?
+
+Most relevance functions build on two signals. Term frequency (TF) says a document
+that mentions a term more often is probably more about it. Inverse document frequency
+(IDF) says a term that appears in few documents, like "timeout," is more informative
+than one that appears everywhere, like "issue." TF-IDF multiplies the two.
+
+BM25 refines TF-IDF: repeated occurrences of a term give diminishing returns, and long
+documents do not win just by containing more words. BM25 is the default ranking
+function in many full-text engines. See
+[What is BM25?](/learn/full-text-search/what-is-bm25) for the formula and a worked
+example.
+
+## When should you use full-text search?
+
+Full-text search is the right tool when the words themselves matter:
+
+- Exact names, product codes, error messages, and IDs.
+- Rare or domain-specific terms that an embedding model may not represent well.
+- Queries where users expect the results to contain what they typed.
+- Results that need to be explainable ("this matched because it contains `timeout`").
+
+It is weaker when the query and the document use different words for the same idea,
+such as "can't sign in" versus "authentication failure." That is where
+[vector search](/learn/vector-search/what-is-vector-search) helps, and many
+applications combine the two with [hybrid search](/learn/full-text-search/hybrid-search).
+For structured conditions such as `status = "open"`, use an equality or range index
+instead of text search.
+
+## How HelixDB does full-text search
+
+HelixDB provides full-text search through text indexes on its property graph:
+
+- A text index provides BM25-ranked search over a top-level string or string-array
+  property of a node label or an edge label.
+- Each index uses one of three preset analyzers: `standard`, `standard_stem_en`, or
+  `whitespace_lowercase`. Term positions are optional.
+- Text indexes can be partitioned by tenant, which keeps a separate index per tenant
+  value.
+- Prefiltered search ranks only the nodes or edges a graph traversal reaches, such as
+  "documents this user can read." A result outside that candidate set is never
+  returned.
+- Text search runs in the same ACID transaction as graph traversals, vector search,
+  and index lookups.
+
+To create and query a text index, see
+[Text indexes](/database/helix-db/query-guides/text-indexes) and
+[Prefiltered search](/database/helix-db/query-guides/prefiltering).
+
+## Frequently asked questions
+
+### Is full-text search the same as keyword search?
+
+In everyday usage, yes. Both describe search that matches the words in a query against
+the words in documents. "Full-text" emphasizes that the whole body of each document is
+indexed, rather than only a title or a set of tags.
+
+### Does full-text search understand synonyms?
+
+Not by default. It matches analyzed terms, so "car" does not match "automobile" unless
+you configure a synonym list or expand the query. Vector search captures this kind of
+similarity without a hand-built list, which is one reason to use hybrid search.
+
+### What is the difference between stemming and lemmatization?
+
+Stemming applies suffix-stripping rules and can produce stems that are not real words.
+Lemmatization uses vocabulary and grammar to map each word to its dictionary form, so
+"better" can map to "good." Lemmatization is usually more accurate and more expensive.
+
+### Do I need a separate search engine for full-text search?
+
+Not necessarily. Some databases include inverted indexes and BM25 ranking, which avoids
+copying data into a second system and keeping it in sync. A dedicated search engine can
+still make sense when search is its own product with specialized requirements. See
+[Graph, vector, and text in one database](/learn/database-architecture/one-database-for-graph-vector-and-text).
+
+## Related topics
+
+  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
+    The ranking function behind most keyword search, explained.
+  </Card>
+  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+    Combining keyword and vector results with rank fusion.
+  </Card>
+  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, nearest neighbors, and approximate search.
+  </Card>
+  <Card title="Text indexes guide" icon="align-left" href="/database/helix-db/query-guides/text-indexes">
+    Create BM25 indexes and run ranked search in HelixDB.
+  </Card>
+
+# What is BM25?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+BM25 (also called Okapi BM25) is a ranking function that scores how relevant a
+document is to a keyword query. For each query term found in a document, it adds a
+score that rewards terms that are rare across the collection, gives diminishing credit
+for repeated occurrences, and adjusts for document length. It is the default relevance
+function in many full-text search engines.
+
+## What is the BM25 formula?
+
+For a query `Q` and a document `D`, the standard Okapi BM25 score is:
+
+```text
+score(D, Q) = sum over each query term q of
+
+    IDF(q) * f(q, D) * (k1 + 1)
+             / ( f(q, D) + k1 * (1 - b + b * |D| / avgdl) )
+
+IDF(q) = ln( 1 + (N - n(q) + 0.5) / (n(q) + 0.5) )
+```
+
+- `f(q, D)` is how many times term `q` appears in document `D`.
+- `|D|` is the length of `D`, in terms, and `avgdl` is the average document length
+  across the collection.
+- `N` is the number of documents in the collection, and `n(q)` is the number of
+  documents that contain `q`.
+- `k1` and `b` are tuning parameters for saturation and length normalization.
+
+The IDF shown adds 1 inside the logarithm, a widely used variant that keeps every
+weight positive. The classic form omits it and can assign negative weights to terms
+that appear in more than half of the documents. Variants differ in small details, but
+all share the three ideas below.
+
+## How BM25 scores a document
+
+### Inverse document frequency: rare terms count more
+
+IDF measures how much a term tells you. A term that appears in almost every document,
+such as "issue" in a ticket system, has an IDF near zero. A term that appears in a
+handful of documents, such as "timeout," has a high IDF. A document that matches the
+rare terms in a query ranks above one that matches only the common ones.
+
+### Term-frequency saturation: the k1 parameter
+
+Mentioning a term more often makes a document more relevant, but only up to a point.
+The term-frequency part of the formula rises quickly and then flattens toward
+`k1 + 1`. With `k1 = 1.2`, for a document of average length:
+
+| Occurrences of the term | 1 | 2 | 3 | 5 | 10 | Limit |
+| --- | --- | --- | --- | --- | --- | --- |
+| Term-frequency factor | 1.00 | 1.38 | 1.57 | 1.77 | 1.96 | 2.20 |
+
+A low `k1` saturates almost immediately, so the first occurrence is nearly all that
+counts. A high `k1` keeps rewarding repetition for longer. Saturation is what stops a
+document from ranking first just by repeating a keyword.
+
+### Length normalization: the b parameter
+
+A long document contains more words, so it matches more terms by chance. The `b`
+parameter controls how much BM25 corrects for that. With `b = 0` length is ignored.
+With `b = 1` term frequency is fully scaled by `|D| / avgdl`. With `k1 = 1.2` and
+`b = 0.75`, one occurrence of a term contributes a factor of about 1.26 in a document
+half the average length, 1.00 at average length, and 0.71 at twice the average length.
+
+### Common parameter values
+
+Commonly cited defaults are `k1` between about 1.2 and 2.0 and `b` around 0.75. These
+are conventions from the research literature and from many search engines, not
+universal rules. Change them only when you can measure the effect on a set of labeled
+queries.
+
+## A worked BM25 example
+
+Take three short documents and the query "export timeout," with `k1 = 1.2`,
+`b = 0.75`, and no stemming or stop words:
+
+```text
+D1: "export fails with timeout"            4 terms
+D2: "export to csv"                        3 terms
+D3: "csv export and pdf export options"    6 terms
+
+N = 3, avgdl = 13 / 3 = 4.33
+```
+
+"export" appears in all three documents, and "timeout" appears only in D1:
+
+```text
+IDF(export)  = ln(1 + (3 - 3 + 0.5) / (3 + 0.5)) = 0.134
+IDF(timeout) = ln(1 + (3 - 1 + 0.5) / (1 + 0.5)) = 0.981
+```
+
+Each cell below is a term's IDF multiplied by its term-frequency factor, and the score
+is their sum:
+
+| Document | export | timeout | Score |
+| --- | --- | --- | --- |
+| D1 | 0.138 | 1.013 | **1.151** |
+| D3 | 0.166 | not present | **0.166** |
+| D2 | 0.153 | not present | **0.153** |
+
+Three effects are visible. D1 wins by a wide margin because it is the only document
+with the rare term "timeout." D3 mentions "export" twice, but saturation and its
+above-average length mean it barely edges out D2. And because "export" is in every
+document, it contributes little to any score.
+
+## BM25 vs TF-IDF
+
+BM25 grew out of the same ideas as TF-IDF and is often described as its successor.
+
+| | Classic TF-IDF | BM25 |
+| --- | --- | --- |
+| Term frequency | Grows without limit, sometimes dampened with a logarithm | Saturates toward `k1 + 1` |
+| Document length | Typically handled by normalizing document vectors | Explicit and tunable with `b` |
+| IDF | Usually `log(N / n)` | Smoothed, probabilistic form |
+| Tuning parameters | Usually none | `k1` and `b` |
+
+In practice BM25 tends to produce better rankings for search out of the box, which is
+why many engines use it as their default.
+
+## BM25 vs vector search
+
+BM25 and [vector search](/learn/vector-search/what-is-vector-search) fail in different
+places, which is why they are often combined.
+
+| | BM25 | Vector search |
+| --- | --- | --- |
+| Matches | The exact analyzed terms in the query | Meaning, via embeddings |
+| Strong at | Names, IDs, error codes, rare terms | Paraphrases, synonyms, vague questions |
+| Weak at | Different words for the same idea | Exact identifiers and rare tokens |
+| Needs a model | No | Yes, an embedding model |
+| Explainability | Each term's contribution is visible | Scores are harder to interpret |
+
+[Hybrid search](/learn/full-text-search/hybrid-search) runs both and fuses the results.
+
+## How HelixDB uses BM25
+
+HelixDB text indexes are BM25-ranked. Each index covers a string or string-array
+property of a node or edge label, and search results come back best match first,
+ordered by BM25 score and then by ID, so ties are broken deterministically.
+
+In [prefiltered search](/database/helix-db/query-guides/prefiltering), where BM25 ranks
+only the nodes or edges a traversal reaches, the BM25 statistics come from the full
+tenant partition rather than only from the candidates. A document's score therefore
+does not depend on how large or small the candidate set happens to be. See
+[Text indexes](/database/helix-db/query-guides/text-indexes) to create an index and
+run a search.
+
+## Frequently asked questions
+
+### What does the 25 in BM25 mean?
+
+BM stands for "best matching." The number identifies one variant in a numbered series
+of weighting functions developed during research on the Okapi retrieval system. BM25
+is the variant that became the standard.
+
+### Are BM25 scores comparable across queries?
+
+No. A BM25 score has no fixed upper bound and depends on the query's terms and the
+collection's statistics. Use scores to order results for one query, not as an absolute
+relevance threshold across queries.
+
+### Does BM25 consider word order?
+
+No. BM25 treats a document as a bag of words. Phrase matching and proximity scoring
+need term positions stored in the index and are applied as additional features by
+engines that support them.
+
+### What is BM25F?
+
+BM25F is an extension for documents with several fields, such as a title and a body.
+It weights each field's term frequency before applying saturation, so a match in the
+title can count for more than the same match in the body.
+
+## Related topics
+
+  <Card title="What is full-text search?" icon="magnifying-glass" href="/learn/full-text-search/what-is-full-text-search">
+    Inverted indexes, analyzers, and relevance ranking.
+  </Card>
+  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+    Combining keyword and vector results with rank fusion.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Pre-filtering, post-filtering, and returning the right top k.
+  </Card>
+  <Card title="Prefiltered search guide" icon="align-left" href="/database/helix-db/query-guides/prefiltering">
+    Rank only the records a traversal reaches in HelixDB.
+  </Card>
+
+# What is hybrid search?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+Hybrid search is a retrieval approach that runs a keyword search, typically BM25, and a
+vector search for the same query, then merges the two ranked lists into one. Keyword
+search catches exact names, IDs, and error codes; vector search catches paraphrases
+and related concepts. Fusing them, often with reciprocal rank fusion, gives results
+that hold up for both kinds of query.
+
+## Keyword search vs vector search
+
+The two methods fail in complementary ways, which is the whole case for combining them.
+
+| | Keyword search (BM25) | Vector (semantic) search |
+| --- | --- | --- |
+| Matches on | The analyzed terms in the query | Meaning, via embeddings |
+| Index | Inverted index | Approximate nearest neighbor index, such as HNSW or IVF |
+| Handles well | "error E1042 on export," product SKUs, names | "why can't I sign in," paraphrases |
+| Struggles with | Synonyms and different wording | Exact identifiers, rare tokens, new jargon |
+| Needs a model | No | Yes, to embed documents and queries |
+| Score | Unbounded relevance score | Distance or similarity between vectors |
+
+A support-ticket search shows the gap. A user typing "E1042" needs the tickets that
+contain that exact code, which an embedding may blur into generic "error" text. A user
+typing "I can't log in after resetting my password" needs tickets about authentication
+failures, even when they share few words with the query.
+
+## How does hybrid search work?
+
+```mermaid
+flowchart LR
+    Q["User query"] --> K["BM25 search<br/>top candidates"]
+    Q --> E["Embed query"] --> V["Vector search<br/>top candidates"]
+    K --> F["Fuse rankings"]
+    V --> F
+    F --> R["Optional reranker"]
+    R --> O["Final top results"]
+```
+
+  <Step title="Retrieve from both indexes">
+    Run BM25 and vector search for the same query, usually in parallel. Retrieve more
+    candidates from each than you plan to return, so good results from one list are
+    not cut off before fusion.
+  </Step>
+  <Step title="Fuse the lists">
+    Combine the two rankings into one with a fusion method such as reciprocal rank
+    fusion.
+  </Step>
+  <Step title="Rerank, optionally">
+    Score the fused top results with a slower, more accurate model, then return the
+    final top results.
+  </Step>
+
+Apply filters, such as tenant or access control, before ranking in both searches. If
+one list is filtered after ranking and the other is not, the fused result mixes two
+different candidate sets. See
+[filtered vector search](/learn/vector-search/filtered-vector-search).
+
+## How do you combine BM25 and vector search results?
+
+### Reciprocal rank fusion
+
+Reciprocal rank fusion (RRF) ignores raw scores and uses only each document's rank in
+each list:
+
+```text
+RRF(d) = sum over each result list L that contains d of
+
+    1 / (k + rank_L(d))
+
+rank starts at 1; k is a constant, commonly 60
+```
+
+The constant `k` dampens the advantage of the very top ranks. The value 60 comes from
+the paper that introduced RRF and is a common convention, not a requirement. Suppose
+BM25 returns A, B, C and vector search returns D, C, A:
+
+| Document | BM25 rank | Vector rank | RRF score (k = 60) |
+| --- | --- | --- | --- |
+| A | 1 | 3 | 1/61 + 1/63 = 0.0323 |
+| C | 3 | 2 | 1/63 + 1/62 = 0.0320 |
+| D | none | 1 | 1/61 = 0.0164 |
+| B | 2 | none | 1/62 = 0.0161 |
+
+Documents that appear in both lists rise to the top. RRF needs no score normalization
+and no training data, which makes it a robust default. Its limitation is that it
+discards score magnitude: a document that is far better than the rest in one list gets
+no extra credit. A weighted variant multiplies each list's terms by a weight to favor
+one method.
+
+### Weighted score blending
+
+The other common approach normalizes each list's scores and blends them:
+
+```text
+hybrid(d) = w * norm(bm25(d)) + (1 - w) * norm(similarity(d))
+```
+
+Raw scores cannot be added directly because they are not on the same scale:
+
+- BM25 scores are unbounded and shift with the query's terms and the collection's
+  statistics.
+- Vector scores depend on the embedding model and the metric. Some are distances,
+  where lower is better, and some are similarities, where higher is better.
+- Both distributions change from query to query, so a fixed threshold on either is
+  unreliable.
+
+Min-max or z-score normalization per query puts the scores on a common scale, and the
+weight `w` is then tuned on labeled queries. This can beat RRF when tuned well, but it
+is sensitive to outliers and to how many candidates each search returns.
+
+### Reranking
+
+A reranker, often a cross-encoder model or an LLM, reads the query and each candidate
+together and produces a new relevance score. It is usually more accurate than either
+first-stage search but far more expensive per document, so it runs only on the fused
+top candidates.
+
+## Hybrid search for RAG
+
+Retrieval-augmented generation (RAG) answers are only as good as the context retrieved.
+User questions to an assistant often mix a concept with an identifier, such as "what
+changed in the refund policy for plan B-7," so pure vector retrieval can miss the one
+chunk that names the identifier. Hybrid search reduces that risk. Three practices
+matter in RAG pipelines:
+
+- Enforce permissions before ranking, so retrieved context never includes content the
+  user cannot read.
+- Deduplicate near-identical chunks after fusion so they do not crowd out other
+  sources.
+- Keep a link from each chunk back to its source document for citations.
+
+Structure helps too: [GraphRAG](/learn/ai-memory/what-is-graphrag) follows
+relationships from the retrieved hits to related entities and documents.
+
+## When is hybrid search worth it?
+
+Hybrid search pays off when queries mix natural language with exact terms: support
+tickets, product catalogs, code and logs, legal and policy documents, and agent memory.
+It adds less when every query is conversational and the corpus has no identifiers, or
+when every lookup is an exact key. Measure it: compare BM25 alone, vector alone, and
+the fused result on a set of real queries with known relevant documents.
+
+## How HelixDB supports hybrid search
+
+HelixDB stores vector indexes and BM25 text indexes as access paths over properties of
+the same nodes and edges, so both searches read the same records:
+
+- One request is one ACID transaction over a committed snapshot. A single request can
+  build a candidate set with a graph traversal, then run a prefiltered vector search
+  and a prefiltered BM25 search over that same candidate set.
+- Prefiltering guarantees that neither search returns a result outside the candidate
+  set, such as documents the current user cannot read. Each prefiltered search
+  returns at most 800 results.
+- The application computes embeddings; HelixDB stores and indexes the vectors.
+- HelixDB has no built-in rank-fusion operator. The application fuses the two result
+  lists, for example with RRF, and applies any reranking.
+
+See [Prefiltered search](/database/helix-db/query-guides/prefiltering),
+[Vector indexes](/database/helix-db/query-guides/vector-indexes), and
+[Text indexes](/database/helix-db/query-guides/text-indexes).
+
+## Frequently asked questions
+
+### Is hybrid search better than vector search?
+
+On workloads that mix exact terms with natural language, it often improves recall of
+exact terms without losing semantic matches, but it is not automatically better. It
+adds a second index, a fusion step, and tuning. Evaluate it on your own queries before
+adopting it.
+
+### Should I use RRF or weighted scores?
+
+Start with RRF. It needs no normalization or labeled data and is hard to get badly
+wrong. Move to weighted blending only when you have labeled queries to tune the weight
+and can measure an improvement.
+
+### How many results should each search return before fusion?
+
+More than the final number you need, because a document ranked modestly in both lists
+can outrank one ranked highly in only one. The right depth depends on your corpus and
+latency budget, so tune it along with the fusion method.
+
+### Does hybrid search need two databases?
+
+No. It needs a keyword index and a vector index over the same content. When both live
+in one database, the two searches see the same data and the same filters. See
+[Graph, vector, and text in one database](/learn/database-architecture/one-database-for-graph-vector-and-text).
+
+## Related topics
+
+  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
+    The ranking function behind most keyword search, explained.
+  </Card>
+  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+    Embeddings, nearest neighbors, and approximate search.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Pre-filtering, post-filtering, and returning the right top k.
+  </Card>
+  <Card title="Prefiltered search guide" icon="align-left" href="/database/helix-db/query-guides/prefiltering">
+    Rank only the records a traversal reaches in HelixDB.
+  </Card>
+
+# What is AI agent memory?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+AI agent memory is the infrastructure that lets an agent built on a large language model
+(LLM) keep information beyond a single model call: what a user told it, what happened in
+earlier sessions, and how it should carry out recurring tasks. Because the model itself
+is stateless, memory lives in an external store that the agent writes to after an
+interaction and reads from before the next one. A useful memory layer does more than
+save transcripts. It extracts durable facts, keeps them current, forgets what is stale
+or deleted, and recalls only the relevant, permitted subset for each request.
+
+## Why is a context window not memory?
+
+The context window is the text a model can read in one call. It works like working
+memory: everything the model knows about the current task has to be in it, and it is
+gone when the call ends. Treating it as long-term memory breaks down for several
+reasons:
+
+- **It resets.** A new session starts empty unless something outside the model puts
+  earlier information back.
+- **It is bounded and priced per token.** Replaying every past conversation grows cost
+  and latency with each turn, and eventually stops fitting.
+- **It has no notion of truth over time.** If a user said one thing last month and the
+  opposite today, a transcript contains both, and the model has to guess which is
+  current.
+- **It is not scoped.** Nothing in a raw prompt records who owns a fact, where it came
+  from, or whether it may be shown to this user.
+- **More text is not always better context.** Models do not use every part of a long
+  prompt equally well, so a focused set of relevant facts often produces better answers
+  than a full history.
+
+Larger context windows make short-term memory roomier, but they do not replace a system
+that decides what to keep, what changed, and what to retrieve.
+
+## What types of memory do AI agents use?
+
+Agent memory is usually described with terms borrowed from cognitive psychology.
+Short-term memory covers what the agent is working with right now; long-term memory
+persists across sessions.
+
+| Type | Horizon | What it holds | Example |
+| --- | --- | --- | --- |
+| Working memory | One model call | The prompt: instructions, recent turns, retrieved context | The assembled context for the current reply |
+| Conversation history | One session | Recent messages in the current conversation | The last few turns of a support chat |
+| Episodic memory | Long-term | Specific past events, with when and where they happened | "The user reported a failed CSV export in last week's session" |
+| Semantic memory | Long-term | Facts and preferences, independent of when they were learned | "The user prefers invoices as PDF attachments" |
+| Procedural memory | Long-term | How to do things: learned workflows and rules | "For this account, check billing status before issuing a refund" |
+| User profile | Long-term, derived | A condensed summary of stable facts and current focus | "Finance admin, moving the team to annual billing this quarter" |
+
+The difference between **episodic and semantic memory** matters in practice. Episodes
+answer "what happened"; semantic facts answer "what is true now." Agents often derive
+semantic facts from episodes, for example inferring a preference from several
+conversations, and keep a link back to those episodes as evidence. The **user profile**
+is not a separate source of truth. It is a summary maintained from long-term memories so
+the agent can load broad context cheaply on every request.
+
+## How does the memory lifecycle work?
+
+A memory system is a loop. Every interaction can add, change, or remove memories, and
+every request reads from the result.
+
+```mermaid
+flowchart LR
+    ingest["Ingest<br/>messages, documents, events"] --> extract["Extract<br/>candidate facts"]
+    extract --> dedupe["Deduplicate<br/>against existing memories"]
+    dedupe --> update["Update or version"]
+    update --> store[("Memory store")]
+    forget["Forget<br/>expire, decay, delete"] --> store
+    store --> recall["Recall<br/>scoped, current, relevant"]
+    recall --> agent["Agent response"]
+    agent --> ingest
+```
+
+1. **Ingest.** Collect raw input: conversation turns, uploaded documents, tool results,
+   and application events.
+2. **Extract.** Turn raw input into atomic, self-contained facts. A reply such as "next
+   Tuesday" only means something together with the question before it, so the
+   extractor needs recent conversation context and the current date.
+3. **Deduplicate.** Compare each candidate with existing memories, by meaning and by
+   exact terms, so the same fact is not stored many times.
+4. **Update and version.** When a fact changes, write a new version and mark the old one
+   as superseded instead of overwriting it. History stays available for audits and for
+   questions about what changed.
+5. **Forget.** Expire time-bound facts, let low-value episodes decay, and delete what a
+   user or policy asks to remove.
+6. **Recall.** Retrieve the memories this user may see, that are still current, and that
+   are relevant to the request, then assemble them into context.
+
+The guide to [building long-term memory](/learn/ai-memory/long-term-memory-for-ai-agents)
+walks through each step as a concrete architecture.
+
+## What infrastructure does a memory layer need?
+
+Each lifecycle step places a different demand on storage and retrieval.
+
+| Requirement | Why it matters | Typical mechanism |
+| --- | --- | --- |
+| Identity and tenancy | Memories belong to a user, team, or organization and must never leak across them | Scope keys on every record, indexed filters, per-tenant indexes |
+| Relationships | Facts connect to people, topics, sources, and earlier versions | Graph edges that queries can traverse |
+| Semantic recall | Users rephrase; "my flight" should find "the trip to the conference" | Vector search over embeddings |
+| Exact recall | Names, IDs, error codes, and rare terms blur in embeddings | Full-text search, typically ranked with BM25 |
+| Recency and lifecycle | Only current, undeleted, unexpired facts belong in context | Timestamps and flags with equality and range indexes |
+| Provenance | The agent must cite sources, debug bad memories, and honor deletion of a source | Links from each memory to the messages or documents it came from |
+
+Many teams assemble these from several systems, such as a relational store for records,
+a vector store for embeddings, and a search engine for keywords. That works, but the
+application then has to keep them consistent. A memory deleted in one system can still
+surface from another, and a permission filter applied after a similarity search can
+remove every result or, if it is forgotten, leak one.
+
+## How HelixDB supports agent memory
+
+HelixDB is an open-source graph database with native vector search and BM25 full-text
+search, so the requirements above can be met in one labeled property graph:
+
+- **Properties with indexes** hold tenant scope, identity, and lifecycle fields such as
+  `isLatest`, `validTo`, `deletedAt`, and `expiresAt`. Equality and range
+  [secondary indexes](/database/helix-db/query-guides/secondary-indexes) make them fast
+  filters.
+- **Edges** record provenance, categories, entities, version updates, and associations.
+- **Vector search** handles deduplication and paraphrase recall, and **BM25** handles
+  exact names, IDs, and rare tokens. Both index types can be
+  [partitioned by tenant](/database/helix-cloud/operate/multi-tenancy).
+- **A profile node** holds stable user context that the agent loads on every request.
+
+The recall pattern is to build the visible candidate set first with a graph traversal,
+then run [prefiltered](/database/helix-db/query-guides/prefiltering) vector and BM25
+search inside it, so a memory outside the set is never returned. Each request runs as
+one ACID transaction, so the traversal and both searches read the same snapshot. The
+application computes embeddings and fuses the vector and BM25 result lists, because
+HelixDB has no built-in rank-fusion operator.
+
+## Frequently asked questions
+
+### What is the difference between short-term and long-term memory for AI agents?
+
+Short-term memory is what the model can see during the current task: the context window
+and the recent conversation. Long-term memory persists across sessions in an external
+store and includes episodic, semantic, and procedural memories. The agent moves
+information between them by writing extracted facts to long-term memory and recalling a
+relevant subset into the context window.
+
+### Is agent memory the same as RAG?
+
+They share retrieval techniques but differ in what they retrieve. Retrieval-augmented
+generation (RAG) typically reads from a document collection that changes independently
+of the agent. Memory is written by the agent from its own interactions, changes as facts
+are corrected, and is scoped to a user or team. Many systems combine the two and link
+each memory to the source passage it came from.
+
+### Can a vector database alone serve as agent memory?
+
+A vector index covers semantic recall, which is one requirement out of several. On its
+own it cannot tell a current fact from a superseded one, enforce who owns a memory,
+reliably match exact identifiers, or explain where a fact came from. Those need
+properties, lifecycle filters, keyword search, and relationships alongside the vectors.
+
+### How should an AI agent forget?
+
+Most systems prefer soft deletion: mark a memory as deleted or superseded and exclude it
+from every recall path, which keeps an audit trail and allows recovery. Time-bound facts
+get an expiry, and low-value episodes can decay based on age and use. Physical deletion
+is reserved for cases where a user request or a retention policy requires it.
+
+### Do larger context windows remove the need for memory?
+
+No. A larger window lets more text into a single call, but the model is still stateless
+between sessions, cost and latency grow with prompt size, and nothing in the window
+resolves which of two conflicting facts is current. Memory decides what to keep and what
+to retrieve; the context window is where the retrieved result goes.
+
+## Related topics
+
+  <Card title="Building long-term memory" icon="brain" href="/learn/ai-memory/long-term-memory-for-ai-agents">
+    Data model, write path, forgetting, and recall for agent memory.
+  </Card>
+  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+    Retrieval over entities and relationships, not only text chunks.
+  </Card>
+  <Card title="Hybrid search" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+    Combine vector similarity with BM25 keyword ranking.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Restrict similarity search to the records a user may see.
+  </Card>
+  <Card title="Prefiltered search" icon="vector-square" href="/database/helix-db/query-guides/prefiltering">
+    Rank only the nodes a traversal reaches in a HelixDB query.
+  </Card>
+  <Card title="Multi-tenancy" icon="users" href="/database/helix-cloud/operate/multi-tenancy">
+    Scope records and search indexes by tenant in Helix Cloud.
+  </Card>
+
+# How to build long-term memory for AI agents
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+To build long-term memory for an AI agent, store extracted facts as versioned records
+scoped to a user, link each one to its source, the entities it mentions, and the version
+it replaced, and index the records for both semantic and exact recall. On the write
+path, application workers extract candidate facts, compare them with existing memories,
+and decide whether each one is new, a duplicate, an update, or an extension. On the read
+path, the agent narrows to current memories the user may see, searches inside that set,
+expands through relationships, and assembles a compact context for the model.
+
+## What are the parts of an agent memory architecture?
+
+A memory system splits into application workers that interpret content and a database
+that stores, relates, and retrieves it.
+
+| Component | Runs in | Responsibility |
+| --- | --- | --- |
+| Extractor | Application | Turns conversations and documents into candidate facts, usually with an LLM call |
+| Embedder | Application | Computes vectors for memories and document chunks |
+| Adjudicator | Application | Decides whether a candidate is new, a duplicate, an update, or an extension |
+| Summarizer | Application | Maintains a profile of stable facts and current focus for each user |
+| Sweeper | Application | Runs scheduled expiry and decay jobs |
+| Retrieval service | Application | Runs searches, fuses and reranks results, and packs context |
+| Memory store | Database | Holds records, relationships, and property, vector, and text indexes |
+
+Keeping interpretation in the application lets you change models and prompts without
+migrating storage. Expressing scope and lifecycle rules in the queries means every
+worker gets the same answer about what is visible.
+
+## What data model does agent memory need?
+
+The model below is generic; adapt the names to your domain.
+
+```mermaid
+flowchart LR
+    user["User"] -->|OWNS| current["Memory<br/>isLatest: true"]
+    user -->|OWNS| old["Memory<br/>isLatest: false"]
+    user -->|HAS_PROFILE| profile["Profile"]
+    current -->|UPDATES| old
+    current -->|MENTIONS| entity["Entity"]
+    current -->|IN_CATEGORY| category["Category"]
+    current -->|EXTRACTED_FROM| chunk["Chunk"]
+    doc["Source document"] -->|HAS_CHUNK| chunk
+    old -->|DERIVED_FROM| session["Session"]
+```
+
+- **User** owns memories. In multi-tenant products every record also carries a tenant
+  key, and team or project memory adds a scope key beyond the user.
+- **Memory** is one atomic fact: its text, embedding, kind (fact, preference, episode,
+  or procedure), salience, confidence, and lifecycle fields such as `createdAt`,
+  `isLatest`, `validFrom`, `validTo`, `expiresAt`, and `deletedAt`.
+- **Source document** and **chunk** hold raw context for citations and document search.
+- **Entity** is a person, product, place, or project that memories mention.
+- **Category** groups memories by topic.
+- **Session** records the conversation a memory came from.
+- **Profile** is the summarizer's output, loaded as always-on context.
+
+Edges carry the meaning: ownership (`OWNS`), provenance (`EXTRACTED_FROM`,
+`DERIVED_FROM`), versions (`UPDATES`, plus `EXTENDS` for enrichment), and associations
+(`MENTIONS`, `IN_CATEGORY`). Keep lifecycle timestamps separate from real-world time. A
+memory about a trip next month needs its own event date, while `validTo` only records
+when the memory stopped being current.
+
+## How does the write path work?
+
+  <Step title="Extract with context">
+    Give the extractor the current message, the previous assistant message, a short
+    window of recent turns, related existing memories, and the current date. Short
+    answers only make sense in context, so resolve them before deciding what to store.
+    Ask for structured output: content, kind, confidence, entities, source, and scope.
+  </Step>
+  <Step title="Find deduplication candidates">
+    Search the user's current memories for similar facts with vector search and for
+    shared names and terms with keyword search. Check for an exact content match so
+    repeated writes are idempotent.
+  </Step>
+  <Step title="Classify the relationship">
+    Decide what the candidate means relative to what is stored. A similarity threshold
+    alone cannot tell a restatement from a correction, so use rules or an LLM to
+    adjudicate.
+  </Step>
+  <Step title="Write atomically">
+    Write the new memory, its ownership and provenance edges, its entity and category
+    links, and any invalidation of an older version together, so recall never sees a
+    half-applied change. If a memory's text changes, re-embed it in the same write.
+  </Step>
+```text
+Existing memory: The user's team deploys the billing service on Fridays.
+Assistant:       Is that still the release schedule?
+User:            no, we moved to Tuesdays
+Candidate:       The user's team deploys the billing service on Tuesdays.
+Decision:        update; the new memory UPDATES the Friday memory
+```
+
+| Decision | When it applies | What to write |
+| --- | --- | --- |
+| Duplicate | Same durable fact as a current memory | Reinforce the existing memory, for example its access count or salience |
+| Update | Corrects or replaces an older fact | New memory with `isLatest` true; old memory gets `isLatest` false and a `validTo` time; an `UPDATES` edge from new to old |
+| Extend | Adds detail without replacing anything | New memory with an `EXTENDS` edge to the existing one |
+| New | No related memory exists | New memory with ownership and provenance edges |
+
+## How should an agent forget?
+
+Forgetting is a set of explicit writes plus filters on every read, not something that
+happens on its own.
+
+- **Supersession.** An updated fact gets `isLatest` false and a `validTo` time. History
+  remains for audits and "what changed" questions.
+- **Soft deletion.** Set `deletedAt` when a user removes a memory. Recall excludes it,
+  and the change is reversible.
+- **Expiry.** Time-bound facts, such as "the user is traveling this week", get an
+  `expiresAt` time. A sweeper hides or removes them once it passes.
+- **Decay.** A sweeper can hide episodic memories that are old, low in salience, and
+  rarely recalled.
+- **Hard deletion.** When a user request or policy requires physical removal, follow
+  provenance edges to find every memory derived from the deleted source.
+
+## How does the read path work?
+
+```mermaid
+flowchart TD
+    scope["Scope to tenant and user"] --> life["Filter lifecycle<br/>current, not deleted"]
+    life --> vec["Vector recall<br/>inside the candidate set"]
+    life --> kw["Keyword recall<br/>inside the candidate set"]
+    vec --> expand["Graph expansion<br/>entities, related facts, sources"]
+    kw --> expand
+    expand --> fuse["Fuse and rerank<br/>in the application"]
+    profile["Profile"] --> fuse
+    fuse --> ctx["Assemble context"]
+```
+
+1. **Scope.** Start from the tenant and user, or from the project or access-control
+   boundary that decides visibility.
+2. **Filter lifecycle.** Keep memories where `deletedAt` is empty, `isLatest` is true,
+   `validTo` is empty, and `expiresAt` is empty or in the future.
+3. **Recall inside the candidate set.** Run vector search for paraphrases and BM25
+   keyword search for names, IDs, and error codes over only the scoped, current
+   memories. Filtering after a global top-k search can leave too few eligible results,
+   and it leaks data whenever a filter is missed.
+4. **Expand.** From the top hits, follow edges to entities and other memories about them,
+   to earlier versions when history matters, and to source chunks for citations. Keep
+   traversal depth bounded.
+5. **Fuse and rerank.** Merge the vector and keyword lists, for example with reciprocal
+   rank fusion, then adjust by salience, recency, and relationship type.
+6. **Assemble context.** Include the profile, the top memories with their sources, and
+   supporting chunks, within a token budget. Leave out embeddings.
+
+## What are common pitfalls?
+
+- **Vector-only memory.** Similarity search misses exact identifiers, returns a fact and
+  its correction side by side, and has no concept of ownership or recency.
+- **No tenancy scope.** Recall that is not bounded by tenant and user can return another
+  user's memories. Treating a missing user ID as "shared" is also risky, so mark shared
+  memories explicitly.
+- **No provenance.** Without links to sources, the agent cannot cite, you cannot debug a
+  wrong memory, and deleting a source document leaves its derived facts behind.
+- **Never forgetting.** Stale facts compete with current ones and context fills with
+  noise.
+- **Overwriting in place.** Editing a memory's text destroys the history needed to
+  explain a change, and an edit without re-embedding leaves the vector describing the
+  old fact.
+
+## How HelixDB fits this architecture
+
+HelixDB can serve as the memory store in this design. Users, memories, source
+documents, chunks, entities, categories, sessions, and profiles are nodes in one labeled
+property graph, and ownership, provenance, versions, and mentions are directed edges.
+
+- Tenant scope, identity, and lifecycle fields are top-level properties with equality
+  and range [secondary indexes](/database/helix-db/query-guides/secondary-indexes). Only
+  top-level properties can be indexed, so keep filter fields out of nested objects.
+- A [vector index](/database/helix-db/query-guides/vector-indexes) on memory and chunk
+  embeddings serves deduplication and paraphrase recall, and a
+  [text index](/database/helix-db/query-guides/text-indexes) ranks their text with BM25
+  for exact recall. Both can be partitioned by tenant.
+- [Prefiltered search](/database/helix-db/query-guides/prefiltering) ranks only the
+  candidate set a traversal builds, so scope and lifecycle rules apply before ranking
+  and nothing outside the set is returned.
+- All entries in a write batch commit or roll back together, which keeps a new version,
+  its edges, and the old version's invalidation consistent. See
+  [guarantees](/database/helix-cloud/operate/guarantees).
+
+The extractor, embedder, adjudicator, summarizer, and sweepers stay in the application.
+The application computes embeddings and fuses vector and BM25 results, because HelixDB
+has no built-in rank-fusion operator.
+
+## Frequently asked questions
+
+### How do you deduplicate agent memories?
+
+Treat deduplication as read-then-write. Retrieve likely matches with vector and keyword
+search over the user's current memories, check for an exact repeat, and let an
+adjudicator choose between duplicate, update, extension, and new. Similarity thresholds
+depend on the embedding model, so retune them whenever the model changes.
+
+### Should an update overwrite the old memory?
+
+Usually not. Writing a new version and marking the old one superseded keeps recall clean
+while preserving history for audits, corrections, and questions about what changed.
+
+### How do you handle shared memory for teams?
+
+Add a scope key beyond the user, such as a project or workspace ID, and mark shared
+memories explicitly. Build the candidate set from the scopes the requesting user belongs
+to, so private and shared memories are combined only where access allows.
+
+### Should the database run memory extraction?
+
+In most architectures, no. Extraction, embedding, and summarization depend on models and
+prompts that change often, so they run as application workers. The database stores the
+results, enforces scope in queries, and retrieves them consistently.
+
+## Related topics
+
+  <Card title="What is AI agent memory?" icon="brain" href="/learn/ai-memory/what-is-ai-agent-memory">
+    Memory types, the memory lifecycle, and what a memory layer needs.
+  </Card>
+  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+    Retrieval that follows relationships between entities and sources.
+  </Card>
+  <Card title="Hybrid search" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+    Combine vector similarity with BM25 keyword ranking.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Why search inside a candidate set instead of filtering afterward.
+  </Card>
+  <Card title="Prefiltered search" icon="vector-square" href="/database/helix-db/query-guides/prefiltering">
+    Rank only the nodes a traversal reaches in a HelixDB query.
+  </Card>
+  <Card title="HelixDB data model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model">
+    Nodes, edges, typed properties, and indexes in HelixDB.
+  </Card>
+
+# What is GraphRAG?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+GraphRAG is a form of retrieval-augmented generation (RAG) that retrieves context from a
+graph of entities and relationships, usually alongside the source text, instead of only
+from the text chunks most similar to the question. The graph lets the retriever follow
+connections between facts, which helps with questions that span several documents,
+center on one entity, or ask about a whole collection. The cost is an indexing step that
+extracts entities and relationships from text, which takes model calls and ongoing work
+to keep the graph accurate.
+
+## How does RAG work?
+
+Retrieval-augmented generation grounds a language model's answer in retrieved data
+instead of relying only on what the model learned in training. In the common vector
+form:
+
+1. Split documents into chunks and compute an embedding for each chunk.
+2. Store the embeddings in a vector index, often alongside a keyword index.
+3. At query time, embed the question and retrieve the top-k most similar chunks.
+4. Put those chunks in the prompt and ask the model to answer from them.
+
+This works well when the answer sits in one or two passages that are worded like the
+question.
+
+## Where does vector RAG fall short?
+
+Similarity search ranks each passage on its own. It has no view of how facts in
+different passages connect.
+
+| Question type | Example | Why chunk similarity struggles |
+| --- | --- | --- |
+| Multi-hop | "Which customers were affected by incidents in services the payments team owns?" | The chain from team to service to incident to customer spans documents, and no single chunk resembles the whole question |
+| Entity-centric | "What do we know about the mobile checkout feature?" | Facts are spread across many chunks and aliases; top-k returns a few similar passages and misses the rest |
+| Global or summary | "What are the main themes in this quarter's support tickets?" | The answer depends on the whole collection, but retrieval sees only a small sample |
+| Permission-bound | "Summarize the contracts this user can read" | Access is a chain of relationships; filtering after top-k can drop every result or leak one |
+
+Chunking also strips context. A passage that says "it was rolled back" may not say what
+"it" refers to.
+
+## How does GraphRAG work?
+
+GraphRAG builds a graph from the same content and uses it at query time. Common
+patterns include:
+
+- **Entity and relationship extraction.** At indexing time, a model or NLP pipeline
+  reads each chunk and emits entities, such as people, products, services, and
+  contracts, plus typed relationships between them. Each chunk links to the entities it
+  mentions.
+- **Entity resolution.** Mentions that refer to the same thing, such as "the billing
+  service" and "billing-svc", are merged into one node so the facts about it connect.
+- **Graph expansion from retrieved nodes.** Vector or keyword search finds entry points,
+  and a bounded traversal collects neighboring entities, relationships, and the chunks
+  that support them. This is sometimes called local search.
+- **Graph-scoped retrieval.** A traversal defines the candidate set first, such as the
+  documents linked to one customer or product area, and similarity search runs inside
+  it.
+- **Community or cluster summaries.** A community detection algorithm partitions the
+  entity graph into groups of densely connected entities, and a model writes a summary
+  of each group ahead of time. Questions about the whole collection are answered by
+  combining the relevant summaries. This is sometimes called global search.
+
+```mermaid
+flowchart LR
+    subgraph indexing["Indexing"]
+        docs["Documents"] --> chunks["Chunks and embeddings"]
+        chunks --> extract["Extract entities<br/>and relationships"]
+        extract --> resolve["Resolve entities"]
+        resolve --> kg[("Graph of entities,<br/>chunks, relationships")]
+        kg -.-> summaries["Optional cluster summaries"]
+    end
+    subgraph querying["Query"]
+        question["Question"] --> entry["Find entry points<br/>vector and keyword"]
+        entry --> expand["Expand through the graph"]
+        expand --> rank["Rank and assemble context"]
+        rank --> answer["LLM answer with citations"]
+    end
+    kg --> entry
+```
+
+## GraphRAG vs vector RAG
+
+| Aspect | Vector RAG | GraphRAG |
+| --- | --- | --- |
+| Retrieval unit | Text chunks | Entities, relationships, chunks, and optional summaries |
+| How context is found | Similarity to the question | Similarity for entry points, then traversal |
+| Multi-hop questions | Only if one chunk covers the chain | Follows edges between facts |
+| Entity-centric questions | Depends on wording matching | Gathers the facts linked to a resolved entity |
+| Collection-wide questions | Sees a top-k sample | Uses cluster summaries when they are built |
+| Indexing cost | Chunk and embed | Also extraction model calls and entity resolution |
+| Content updates | Re-embed changed chunks | Also update entities, edges, and affected summaries |
+| Explainability | Cites chunks | Cites chunks and the paths that connect them |
+| Access control | Metadata filters | Permissions can be modeled as edges and traversed |
+
+## When should you use GraphRAG?
+
+GraphRAG pays off when questions are about connections: multi-hop questions, entity
+profiles, dependency and impact analysis, or themes across a collection. It also fits
+when the domain already has structure, such as customers, products, tickets, and
+contracts, or when access rules are relationships that retrieval must respect.
+
+Vector or hybrid RAG is often enough when answers live in single passages, as with FAQs
+and product documentation, or when content changes faster than extraction can keep up. A
+practical path is to start with hybrid vector and BM25 retrieval, collect the questions
+it answers poorly, and add graph structure where those failures cluster.
+
+## What does GraphRAG cost?
+
+- **Extraction cost.** Every chunk goes through a model at indexing time, and changing
+  the extraction prompt or model can mean reprocessing the whole collection.
+- **Graph quality.** Extraction can miss relationships or invent ones that are not in
+  the text. Entity resolution fails in both directions: duplicates split one entity's
+  facts across several nodes, and over-merging combines different entities into one.
+- **Freshness.** Updated documents require updating entities, edges, and any summaries
+  that depend on them.
+- **Consistency.** When the graph, vector index, and keyword index live in separate
+  systems, the application must keep them in sync.
+- **Query fan-out.** Highly connected entities can pull in large neighborhoods, so bound
+  traversal depth and the number of neighbors followed.
+
+Constraining entity and relationship types with a schema, keeping an edge from every
+extracted fact back to its source chunk, and evaluating against a fixed question set
+keep these costs visible.
+
+## How do you implement GraphRAG?
+
+  <Step title="Define the schema">
+    Choose entity types, relationship types, and how documents and chunks are stored.
+  </Step>
+  <Step title="Index the content">
+    Chunk documents, compute embeddings, and index chunk text for vector and keyword
+    search.
+  </Step>
+  <Step title="Extract and resolve">
+    Extract entities and relationships from each chunk, merge duplicate entities, and
+    link each chunk to the entities it mentions.
+  </Step>
+  <Step title="Retrieve with the graph">
+    Find entry points, traverse a bounded neighborhood, search within it, and fuse the
+    results into context with citations.
+  </Step>
+  <Step title="Evaluate">
+    Compare answers with vector-only retrieval on multi-hop, entity, and summary
+    questions.
+  </Step>
+
+## How HelixDB supports GraphRAG
+
+HelixDB is a graph database with native vector search and BM25 full-text search, so
+documents, chunks, entities, and relationships can live in one labeled property graph.
+It is a multigraph, so two entities can be connected by several typed relationships.
+[Vector](/database/helix-db/query-guides/vector-indexes) and
+[text](/database/helix-db/query-guides/text-indexes) indexes on chunk properties sit
+beside the graph rather than in a separate system.
+
+Retrieval can traverse first and then search within the traversal. With
+[prefiltering](/database/helix-db/query-guides/prefiltering), the order is graph
+traversal, exact candidate membership, ranking, then top k, and a result outside the
+candidate set is never returned. A prefiltered search accepts up to 1,000,000 unique
+candidates and returns at most 800 results.
+[Traversals](/database/helix-db/query-guides/traversals) support bounded repeats and
+shortest paths for expansion.
+
+Each request is one ACID transaction over a committed snapshot, so the traversals,
+vector searches, and text searches in a request read the same data. The application
+runs extraction, computes embeddings, and fuses vector and BM25 results, because HelixDB
+has no built-in rank-fusion operator.
+
+## Frequently asked questions
+
+### Is GraphRAG better than vector RAG?
+
+It is better for different questions. GraphRAG helps with multi-hop, entity-centric,
+and collection-wide questions, and it costs more to build and maintain. For
+single-passage lookups, vector or hybrid retrieval is usually simpler and just as
+accurate.
+
+### Do I need a knowledge graph before using GraphRAG?
+
+You need a graph, but it does not have to be built by hand. Many pipelines extract it
+from documents with a model, and many domains already have structured relationships,
+such as ticket links, product catalogs, or ownership records, that can seed it. See
+[What is a knowledge graph?](/learn/graph-databases/what-is-a-knowledge-graph)
+
+### How does GraphRAG relate to hybrid search?
+
+They are complementary. Hybrid search combines vector and keyword ranking to find good
+entry points, and GraphRAG adds traversal from those entry points. Many GraphRAG systems
+use hybrid search as their first retrieval step.
+
+### How is GraphRAG related to AI agent memory?
+
+An agent memory store is often a graph of facts, entities, sources, and versions scoped
+to one user. Recalling from it uses the same moves as GraphRAG: find relevant facts by
+similarity and keywords, then expand through relationships. See
+[What is AI agent memory?](/learn/ai-memory/what-is-ai-agent-memory)
+
+## Related topics
+
+  <Card title="What is a knowledge graph?" icon="share-nodes" href="/learn/graph-databases/what-is-a-knowledge-graph">
+    Entities, relationships, and provenance for search and LLMs.
+  </Card>
+  <Card title="Hybrid search" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+    Combine vector similarity with BM25 keyword ranking.
+  </Card>
+  <Card title="Building long-term memory" icon="brain" href="/learn/ai-memory/long-term-memory-for-ai-agents">
+    Apply graph-plus-search retrieval to per-user agent memory.
+  </Card>
+  <Card title="One database for graph, vector, and text" icon="layer-group" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+    Trade-offs of keeping all three access paths in one system.
+  </Card>
+  <Card title="Prefiltered search" icon="vector-square" href="/database/helix-db/query-guides/prefiltering">
+    Rank only the nodes a traversal reaches in a HelixDB query.
+  </Card>
+  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+    Follow outgoing and incoming relationships in a HelixDB query.
+  </Card>
+
+# Why build a database on object storage?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+A database built on object storage keeps its durable data in an object store, such as
+a service that implements the S3 API, and treats the memory and local disks of its
+servers as caches. This separates storage from compute: data can grow without adding
+servers, compute can scale with query load, and losing a server loses only cache. The
+cost is slower reads on a cache miss and a floor on write latency, so these systems
+depend on good caching and batched writes.
+
+## How do traditional databases store data?
+
+In the traditional model, each database server owns its data on local disk, and some
+systems keep the whole dataset in memory. Durability comes from writing to that disk
+and replicating it to other servers' disks. This couples storage and compute:
+
+- **Storing more data** means bigger disks or more memory per machine, or splitting
+  the data into shards across more machines.
+- **Serving more reads** means adding replicas, and each replica keeps its own full
+  copy of the data.
+- **Replacing or adding a server** means copying data to it before it can serve
+  traffic.
+
+This works well while the dataset fits comfortably on a few machines. It gets
+expensive when data grows faster than query load, because you pay for compute and
+fast storage to hold data that is rarely read. Graph databases feel this sharply: a
+large graph is often kept in memory or on local SSD for fast traversal, so its size is
+capped by the biggest machine you can afford.
+
+## How does a database on object storage work?
+
+```mermaid
+flowchart TB
+    C["Clients"] --> N1["Compute node<br/>memory + NVMe cache"]
+    C --> N2["Compute node<br/>memory + NVMe cache"]
+    C --> N3["Compute node<br/>memory + NVMe cache"]
+    N1 --> S[("Object storage<br/>source of truth")]
+    N2 --> S
+    N3 --> S
+```
+
+- **Object storage is the source of truth.** Data files, index files, and the metadata
+  that says which files make up the current version all live in the object store.
+- **Compute nodes are close to stateless.** They hold caches in memory and on local
+  NVMe or SSD, and can be added, removed, or replaced without moving data.
+- **Reads go through the cache hierarchy:** memory first, then local disk, then object
+  storage on a miss.
+- **Writes are batched and published atomically.** A writer typically uploads new
+  immutable files, then updates the metadata to make them part of the current version.
+  Object stores generally favor writing whole objects over updating them in place, so
+  many designs use log-structured or immutable-file layouts.
+
+Correctness depends on guarantees from the object store. The system needs strongly
+consistent reads, so a reader that follows new metadata finds the files it points to,
+and it needs conditional writes, such as "create only if absent" or "replace only if
+unchanged," or another coordination mechanism, so two writers cannot both believe
+they committed the same version.
+
+## What is separation of storage and compute?
+
+| | Local-disk database | Object-storage database |
+| --- | --- | --- |
+| Source of truth | Local disks on each server | The object store |
+| Durability | Replication between servers | Provided by the object store |
+| Scaling storage | Bigger machines or more shards | Grows independently of compute |
+| Scaling reads | Replicas, each with a full data copy | More compute nodes sharing one copy |
+| Losing a server | Data must be re-replicated | Only cache is lost |
+| Read latency | Consistently local | Fast on cache hits, slower on misses |
+| Write latency | Local disk plus replication | At least one object-store round trip |
+
+## What are the tradeoffs?
+
+- **Cold-read latency.** A cache miss pays an object-store round trip, which is much
+  slower than reading local NVMe or memory. Latency depends on how much of the working
+  set the caches hold.
+- **A write latency floor.** When the object store is the only durable tier, a commit
+  is durable only after the object store acknowledges it. Batching many writes into
+  one upload keeps throughput high, but a single write cannot finish faster than that
+  round trip.
+- **Caching becomes central.** Cache sizing, warming, and eviction policy decide
+  latency, so good systems cache the right data for each workload and warm caches
+  after a restart.
+- **Request-oriented pricing and access.** Object stores work best with fewer, larger
+  requests, so data layout and batching matter more than on local disk.
+
+## Why does cost scale better?
+
+The bulk of a large dataset is usually cold: most of the data is read rarely, and a
+smaller working set serves most queries. An object-storage design matches cost to
+that shape:
+
+- **Bulk data is priced at object-storage rates**, which are typically far lower per
+  byte than provisioned SSD or memory, and the object store provides durability.
+- **Compute is sized for the working set and the query load**, not for the total
+  dataset.
+- **Read capacity scales without copying data.** New compute nodes share the same
+  stored data and fill their caches as they serve queries.
+
+This is also what makes serverless-style databases possible. Because no data lives
+only on a server, compute can scale up for a traffic spike and back down afterward
+without a long data migration.
+
+## When is object storage a poor fit?
+
+A local-disk or in-memory database may be the better choice when every read, including
+the first, needs guaranteed sub-millisecond latency; when individual writes need
+the lowest possible commit latency; or when the dataset is small and stable enough
+that one well-provisioned machine holds it comfortably.
+
+## How HelixDB uses object storage
+
+HelixDB is built on object storage:
+
+- Object storage is the source of truth. NVMe or SSD and memory are caches, and
+  storage scales independently of compute.
+- The system can recover from full cache loss by reading object storage. Cache misses
+  fall through to object storage, so caching affects latency, not results.
+- Helix Cloud runs a gateway, a single writer process, and readers that scale
+  automatically. The writer uses MVCC, runs write transactions concurrently, and
+  resolves conflicts at commit.
+- Readers see new commits after a snapshot refresh. Reads served by the writer alone
+  give read-after-write consistency.
+
+The general tradeoffs still apply; for example, cold reads pay object-storage latency.
+See [Architecture](/database/helix-cloud/start-here/architecture) for the read and
+write paths and [Tradeoffs](/database/helix-cloud/operate/tradeoffs) for where the
+design fits and where another system may fit better.
+
+## Frequently asked questions
+
+### What is the cheapest way to store a large graph?
+
+Cost is driven by where the full graph lives. Keeping the whole graph in memory or on
+provisioned SSD means paying fast-storage prices for data that is rarely read. Keeping
+it in object storage and caching the frequently traversed part usually costs far less
+at scale, at the price of slower traversals that touch uncached data.
+
+### Is a database on object storage slower?
+
+On cache hits, reads come from memory or local disk, as in a traditional database. On
+cache misses, reads pay object-storage latency. Writes wait for a durable object-store
+write. Whether that matters depends on how well your working set fits in cache and how
+latency-sensitive each write is.
+
+### What happens if a server fails?
+
+In an object-storage design, a failed compute node loses only its cache and any
+requests it was serving. A replacement reads the current version from object storage
+and warms its cache as it serves queries, so there is no data to re-replicate before
+it can start.
+
+### Is this the same as a serverless database?
+
+Not exactly, but they are related. Separating storage from compute is what lets
+serverless databases add and remove compute quickly. A database can use object storage
+without being offered as a serverless service.
+
+## Related topics
+
+  <Card title="Graph, vector, and text in one database" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+    The hidden costs of stitching separate stores together.
+  </Card>
+  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+    Nodes, edges, traversals, and when a graph is the right model.
+  </Card>
+  <Card title="Helix Cloud architecture" icon="cloud" href="/database/helix-cloud/start-here/architecture">
+    The gateway, writer, readers, caches, and object storage.
+  </Card>
+  <Card title="Helix Cloud tradeoffs" icon="scale-balanced" href="/database/helix-cloud/operate/tradeoffs">
+    What the architecture is optimized for, and where it is not.
+  </Card>
+
+# Do you need separate graph, vector, and text databases?
+
+Page type: Concept
+
+<div className="flex flex-wrap gap-2"><Badge color="purple" size="sm">Concept</Badge></div>
+
+Many applications do not need separate graph, vector, and text databases. An
+application that needs relationships, semantic similarity, and keyword search can keep
+all three in one database when its vector and full-text indexes are access paths over
+the same records the graph stores. That removes the
+sync pipelines, dual writes, and consistency gaps of separate stores, and lets one
+transaction answer a question such as "find documents this user can read that match
+this query." Separate specialized systems still make sense for some workloads,
+covered below.
+
+## What does a stitched-together stack look like?
+
+A common architecture uses one system per access pattern: a primary or graph database
+for entities and relationships, a vector store for embeddings, and a search engine for
+keyword queries. Pipelines copy data between them, and application code queries each
+one and merges the answers.
+
+```mermaid
+flowchart LR
+    App["Application"] -->|writes| G[("Graph or primary database")]
+    G -->|change pipeline| V[("Vector store")]
+    G -->|change pipeline| T[("Search engine")]
+    App -->|query| G
+    App -->|query| V
+    App -->|query| T
+```
+
+Each system can be excellent at its own job. The cost is in the seams between them.
+
+## What does it cost to run separate stores?
+
+| Cost | What goes wrong |
+| --- | --- |
+| Sync pipelines | Change-data-capture jobs, queues, and re-embedding workers lag, fail, and need backfills and replays. |
+| Dual writes | When the application writes to two systems directly, there is no transaction across them, so a partial failure leaves them disagreeing. |
+| Consistency gaps | Search returns a document that was deleted, misses one that was just created, or ranks on a stale embedding. |
+| Permission drift | Access rules copied into search indexes as metadata go stale, so revoking access in the source may not revoke it in search right away. |
+| Multiple systems to operate | Each store has its own scaling, backups, upgrades, monitoring, security review, and on-call burden. |
+| Cross-system joins | Application code fetches top results from one store, then looks up relationships in another, which adds round trips and custom merge logic. |
+
+Permission drift deserves attention in retrieval-augmented generation (RAG). If the
+vector store still returns a chunk from a document the user lost access to, the model
+can quote it.
+
+Cross-system joins also cause a subtle ranking bug. A common workaround is to take the
+top results from the vector store, then drop the ones the graph says the user cannot
+see. If most of the top results are dropped, the user gets too few results even though
+relevant, permitted documents exist further down. See
+[filtered vector search](/learn/vector-search/filtered-vector-search).
+
+## What changes with one transactional store?
+
+When graph data, vector indexes, and text indexes live in one database over the same
+records, several problems disappear rather than needing to be managed:
+
+- **No copy to keep in sync.** The embedding and the text are properties of the record
+  itself, so there is no pipeline to lag behind.
+- **One transaction, one snapshot.** A query can traverse relationships and run
+  searches against the same committed state, so the graph neighborhood and the search
+  hits agree.
+- **Exact filtering before ranking.** Search can run inside the set of records a
+  traversal reaches, such as documents a user can read, instead of filtering a
+  truncated result list afterward.
+- **One system to operate, secure, and back up.**
+
+The combined query also gets simpler. "Tickets from this customer's account that
+mention this error code or describe a similar problem" becomes one request: traverse
+from the customer to their tickets, then run keyword and vector search over just
+those tickets.
+
+## When do separate systems make sense?
+
+A single database is not always the right answer. Separate systems are reasonable when:
+
+- **Search is its own product.** A large public search experience may need features a
+  multi-purpose database does not offer, such as faceting, highlighting, typo
+  tolerance, or custom language analysis.
+- **The workload has no relationships or filters.** Pure similarity search over a very
+  large embedding collection may be served well by a dedicated vector index.
+- **An existing system of record cannot move.** If another database owns your
+  transactions, you will be syncing data anyway, and the question becomes where the
+  search and graph copies should live.
+- **Workloads need strict isolation.** Different teams, scaling profiles, or failure
+  domains can justify separate systems.
+- **The job is analytics.** Large scans and aggregations over history belong in a data
+  warehouse, not in an online graph or search store.
+
+## Questions to ask before choosing
+
+- Do your queries combine relationships with similarity or keyword relevance?
+- Does access control depend on relationships, such as teams, shares, or ownership?
+- How stale can search results be after a write or a permission change?
+- Do you need exact identifiers as well as semantic matches?
+- How many data systems can your team operate well?
+
+If your queries combine these kinds of retrieval, access depends on relationships, and
+stale results would cause real problems, one store usually saves more work than it
+costs.
+
+## How HelixDB keeps graph, vector, and text together
+
+HelixDB is a graph database with native vector search and BM25 full-text search:
+
+- **Indexes are access paths over the same data.** Data lives in one labeled property
+  graph. Secondary, vector, and text indexes are optional access paths over a label
+  and a top-level property on nodes or edges, so relationships can be indexed and
+  searched too.
+- **One ACID transaction per request.** Each request runs over a committed snapshot
+  with serializable snapshot isolation. Graph traversals, vector search, text search,
+  and index lookups run in the same transaction, and all entries in a write batch
+  commit or roll back together.
+- **Prefiltered search.** Vector and BM25 search can run inside an exact,
+  traversal-defined candidate set. The order is graph traversal, exact candidate
+  membership, ranking, then top k, so a result outside the candidate set is never
+  returned.
+- **Application-side pieces.** The application computes embeddings and fuses vector
+  and BM25 results.
+
+See the [introduction](/database/helix-db/start-here/introduction), the
+[data model](/database/helix-db/core-concepts/data-model),
+[Prefiltered search](/database/helix-db/query-guides/prefiltering), and
+[Guarantees](/database/helix-cloud/operate/guarantees).
+
+## Frequently asked questions
+
+### Can a graph database do vector search?
+
+Some can. Graph databases differ: some include vector indexes natively, and others
+rely on an external vector store. Check whether vector search can be restricted to
+the results of a traversal and whether it runs in the same transaction as graph reads.
+
+### Do I need a knowledge graph and a vector database for RAG?
+
+You need both kinds of retrieval if your questions depend on relationships as well as
+meaning, but not necessarily two databases. A graph database with vector and text
+indexes can hold the knowledge graph and serve similarity search over the same
+records. See [What is GraphRAG?](/learn/ai-memory/what-is-graphrag).
+
+### Does one database become a bottleneck?
+
+It can if its architecture does not scale the part of the workload you stress. Look
+at how it scales reads and storage, how writes are coordinated, and what isolation it
+offers. See
+[Databases on object storage](/learn/database-architecture/object-storage-databases)
+for one approach.
+
+### Can I still add a search engine later?
+
+Yes. Starting with one store does not prevent adding a specialized system for a
+specific need later. It means you add the seams only when a workload justifies them.
+
+## Related topics
+
+  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+    Combining keyword and vector results with rank fusion.
+  </Card>
+  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+    Pre-filtering, post-filtering, and returning the right top k.
+  </Card>
+  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+    Entities, relationships, and provenance for search and LLMs.
+  </Card>
+  <Card title="Databases on object storage" icon="cloud" href="/learn/database-architecture/object-storage-databases">
+    Separating storage from compute, and what it means for cost.
+  </Card>
 
