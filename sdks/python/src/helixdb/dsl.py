@@ -238,8 +238,8 @@ class DateTime:
 def _datetime_to_rfc3339(value: DateTime, path: str) -> str:
     millis = value.millis()
     try:
-        dt = datetime.fromtimestamp(millis / 1000, timezone.utc)
-    except (OverflowError, OSError) as exc:
+        dt = _UNIX_EPOCH + timedelta(milliseconds=millis)
+    except OverflowError as exc:
         raise QueryError.invalid_datetime(path, millis) from exc
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
