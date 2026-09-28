@@ -391,3 +391,76 @@ fn graph_scans_charge_rows_at_empty_small_and_saturating_estimates() {
         assert!(elements.latency >= profile.range_scan(rows).latency);
     }
 }
+
+#[test]
+fn membership_price_never_ties_the_per_row_filter() {
+    let profiles = [
+        StorageCostProfile::default(),
+        StorageCostProfile {
+            authoritative_verify_per_id: LatencyEstimate::ZERO,
+            cpu_predicate_eval: LatencyEstimate::ZERO,
+            ..StorageCostProfile::default()
+        },
+        StorageCostProfile {
+            object_get_latency: LatencyEstimate::ZERO,
+            ..StorageCostProfile::default()
+        },
+        StorageCostProfile {
+            object_get_latency: LatencyEstimate::micros(50_000),
+            ..StorageCostProfile::default()
+        },
+    ];
+    let key = |cost: CostVector| (cost.latency, cost.object_reads);
+    for profile in &profiles {
+        let set = profile.bitmap_equality_lookup(EstimatedRows::rows(10));
+        let label = profile.bitmap_equality_lookup(EstimatedRows::rows(1_000));
+        for count in 0..=RECORD_BATCH_ROWS {
+            let rows = EstimatedRows::rows(count);
+            let filter = key(profile.stored_predicate_filter(rows));
+            for label_domain in [None, Some(label)] {
+                let unbounded = key(profile.index_membership_filter(
+                    set,
+                    label_domain,
+                    MembershipStream::MayExceedOneBatch(rows),
+                ));
+                let bounded = key(profile.index_membership_filter(
+                    set,
+                    label_domain,
+                    MembershipStream::WithinOneBatch(RecordBatchRows::at_most(count)),
+                ));
+                match count {
+                    0 => assert!(unbounded > filter, "{profile:?} rows {count}"),
+                    _ => assert!(unbounded < filter, "{profile:?} rows {count}"),
+                }
+                assert!(bounded > filter, "{profile:?} rows {count}");
+            }
+        }
+    }
+}
+
+#[test]
+fn membership_stream_classifies_by_proven_bound() {
+    let rows = EstimatedRows::rows(10);
+    [(0, 0), (2, 2), (256, 10)]
+        .into_iter()
+        .for_each(|(upper, capped)| {
+            assert_eq!(
+                MembershipStream::new(rows, Some(upper)),
+                MembershipStream::WithinOneBatch(RecordBatchRows::at_most(capped))
+            );
+        });
+    [Some(257), Some(usize::MAX), None]
+        .into_iter()
+        .for_each(|upper| {
+            assert_eq!(
+                MembershipStream::new(rows, upper),
+                MembershipStream::MayExceedOneBatch(rows)
+            );
+        });
+    assert_eq!(
+        MembershipStream::new(EstimatedRows::rows(1_000), Some(256)),
+        MembershipStream::WithinOneBatch(RecordBatchRows::at_most(256))
+    );
+    assert!(RecordBatchRows::rows(RECORD_BATCH_ROWS).is_some());
+    assert!(RecordBatchRows::rows(257).is_none());
+}

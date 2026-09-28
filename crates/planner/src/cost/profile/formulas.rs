@@ -1,5 +1,6 @@
 //! Cost formulas derived from `StorageCostProfile`.
 
+use crate::cost::{MembershipStream, RECORD_BATCH_ROWS};
 use crate::properties::{KeyLocality, PositiveUsize};
 
 use super::{
@@ -283,52 +284,90 @@ impl StorageCostProfile {
             .serial(self.predicate_eval(rows))
     }
 
-    /// Cost a row-preserving node index membership filter.
+    /// Cost a row-preserving node index membership filter by what the interpreter
+    /// does for `stream`.
     ///
-    /// The secondary set is read once and each input row pays one in-memory
-    /// probe. A label-scoped predicate rejects other labels without reads.
-    /// An unscoped predicate passes the `label_domain` bitmap read, which runs
-    /// concurrently with the set read, and evaluates every row of another
-    /// label per row. The planner cannot see which labels an expansion
-    /// reaches, so half of the input is charged the stored-record filter as
-    /// a heuristic share of those rows. An unscoped membership therefore wins
-    /// only once the stream is large enough to amortize both bitmap reads,
-    /// even though the stream may never reach the label and then evaluates
-    /// every row after reading them.
+    /// The interpreter evaluates a stream of at most [`RECORD_BATCH_ROWS`] node
+    /// rows row by row, exactly like the per-row filter, and never reads the set.
+    /// Past one batch it reads the secondary set once per request, concurrently
+    /// with the `label_domain` bitmap for an unscoped predicate, probes it once per
+    /// row, and evaluates only rows of other labels.
+    ///
+    /// * Within one batch, or an empty stream: the filter's work plus the set
+    ///   read. Membership can only match the filter there, so it never wins.
+    /// * An unbounded stream estimated within one batch: the filter's work less
+    ///   one record read. At the estimate both plans do the same work, but only
+    ///   the membership stops reading records if the stream outgrows the
+    ///   estimate. The credit is the smallest unit of that work, so it settles
+    ///   this tie under every profile without outweighing a real cost difference.
+    /// * Past one batch: the set reads plus one probe per row. An unscoped
+    ///   predicate rewrites only when exactly one label's index answers it, so its
+    ///   rows are priced as that label's. A row of another label costs one probe
+    ///   more than the filter, after reads made at most once per request.
     ///
     /// ```
-    /// use helix_planner::cost::{EstimatedRows, StorageCostProfile};
+    /// use helix_planner::cost::{
+    ///     EstimatedRows, MembershipStream, RecordBatchRows, StorageCostProfile,
+    /// };
     /// let profile = StorageCostProfile::default();
     /// let set = profile.bitmap_equality_lookup(EstimatedRows::rows(10));
     /// let label = profile.bitmap_equality_lookup(EstimatedRows::rows(1_000));
-    /// let rows = EstimatedRows::rows(1_000);
-    /// let scoped = profile.index_membership_filter(set, None, rows);
-    /// let unscoped = profile.index_membership_filter(set, Some(label), rows);
-    /// assert_eq!(scoped.authoritative_graph_reads, 0);
-    /// assert_eq!(unscoped.authoritative_graph_reads, 500);
-    /// assert_eq!(unscoped.object_reads, 2 + 500);
-    /// assert!(scoped.latency < profile.stored_predicate_filter(rows).latency);
-    /// assert!(unscoped.latency > profile.stored_predicate_filter(rows).latency);
+    /// let f = |n| profile.stored_predicate_filter(EstimatedRows::rows(n));
+    /// let unbounded = |n| MembershipStream::MayExceedOneBatch(EstimatedRows::rows(n));
     ///
-    /// // A larger stream amortizes the bitmap reads.
-    /// let rows = EstimatedRows::rows(5_000);
-    /// let unscoped = profile.index_membership_filter(set, Some(label), rows);
-    /// assert!(unscoped.latency < profile.stored_predicate_filter(rows).latency);
+    /// for label_domain in [None, Some(label)] {
+    ///     // An unbounded stream estimated within one batch: one record read less.
+    ///     let cost = profile.index_membership_filter(set, label_domain, unbounded(10));
+    ///     assert_eq!(
+    ///         cost.latency.as_micros(),
+    ///         f(10).latency.as_micros() - profile.authoritative_verify_per_id.as_micros()
+    ///     );
+    ///     assert_eq!(cost.object_reads, 9);
+    ///
+    ///     // A stream proven to fit in one batch, or an empty one, keeps the filter.
+    ///     let bounded = MembershipStream::WithinOneBatch(RecordBatchRows::at_most(10));
+    ///     let cost = profile.index_membership_filter(set, label_domain, bounded);
+    ///     assert!(cost.latency > f(10).latency);
+    ///     let cost = profile.index_membership_filter(set, label_domain, unbounded(0));
+    ///     assert!(cost.latency > f(0).latency);
+    ///
+    ///     // Past one batch the set reads amortize over the stream.
+    ///     let cost = profile.index_membership_filter(set, label_domain, unbounded(1_000));
+    ///     assert!(cost.latency < f(1_000).latency);
+    /// }
+    ///
+    /// let unscoped = profile.index_membership_filter(set, Some(label), unbounded(1_000));
+    /// assert_eq!(unscoped.object_reads, 2);
+    /// assert_eq!(unscoped.authoritative_graph_reads, 0);
+    ///
+    /// // Just past one batch the set read outweighs the record reads it saves.
+    /// let scoped = profile.index_membership_filter(set, None, unbounded(257));
+    /// assert_eq!(scoped.latency.as_micros(), 5_317);
+    /// assert_eq!(f(257).latency.as_micros(), 2_827);
     /// ```
     pub fn index_membership_filter(
         &self,
         set: CostVector,
         label_domain: Option<CostVector>,
-        rows: EstimatedRows,
+        stream: MembershipStream,
     ) -> CostVector {
-        match label_domain {
-            Some(label_domain) => self
-                .parallel(&[set, label_domain], PositiveUsize::at_least_one(2))
-                .serial(self.secondary_set_operation(rows))
-                .serial(
-                    self.stored_predicate_filter(EstimatedRows::rows(rows.as_rows().div_ceil(2))),
-                ),
-            None => set.serial(self.secondary_set_operation(rows)),
+        match stream {
+            MembershipStream::MayExceedOneBatch(rows) if rows.as_rows() > RECORD_BATCH_ROWS => {
+                label_domain
+                    .map_or(set, |label| {
+                        self.parallel(&[set, label], PositiveUsize::at_least_one(2))
+                    })
+                    .serial(self.secondary_set_operation(rows))
+            }
+            MembershipStream::MayExceedOneBatch(rows) => {
+                rows.as_rows().checked_sub(1).map_or(set, |credited| {
+                    self.authoritative_verification(EstimatedRows::rows(credited))
+                        .serial(self.predicate_eval(rows))
+                })
+            }
+            MembershipStream::WithinOneBatch(rows) => self
+                .stored_predicate_filter(rows.estimated_rows())
+                .serial(set),
         }
     }
 
