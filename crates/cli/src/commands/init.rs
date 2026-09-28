@@ -25,11 +25,6 @@ pub async fn run(
         None if prompts::is_interactive() => prompts::select_init_project_dir(&current_dir)?,
         None => current_dir,
     };
-    let project_name = project_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("helix-project")
-        .to_string();
     let config_path = project_dir.join("helix.toml");
 
     if config_path.exists() {
@@ -41,6 +36,13 @@ pub async fn run(
 
     fs::create_dir_all(&project_dir)?;
     fs::create_dir_all(project_dir.join(".helix"))?;
+    // Canonicalize so `--path .` or `..` names the project after the real
+    // directory rather than falling back to the default.
+    let project_name = dunce::canonicalize(&project_dir)?
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("helix-project")
+        .to_string();
 
     let mut config = HelixConfig::default_config(&project_name);
 
