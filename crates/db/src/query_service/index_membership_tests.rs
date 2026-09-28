@@ -438,10 +438,12 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
             .out(Some("HAS_ATTRIBUTE"))
             .where_(attribute(expr::Predicate::eq("kind", "B")))
     };
-    // Production planning has no statistics, so the seed's default estimate
-    // is too small to pay for a set read and the post-expansion filter stays
-    // per row. Statistics that make `uid` a selective seed over millions of
-    // `hub` items make the expanded stream large enough for membership.
+    // Production planning has no statistics, so the expanded stream is an
+    // unbounded estimate within one record batch and the post-expansion
+    // filter plans membership, which reads its set only once the stream
+    // outgrows one batch. Statistics that make `uid` a selective seed over
+    // millions of `hub` items make the expanded stream large enough to pay
+    // for the set read up front.
     let item_statistics = {
         let prepared = indexed
             .planner_context_scoped_prepared(context::ParamBindings::default(), scope)
@@ -496,16 +498,21 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
         let values = read_result(hub(item, kind).values(vec!["uid"]));
         let count = read_result(hub(item, kind).count());
         assert_eq!(membership_steps(&plan(&unindexed, &values, scope).await), 0);
-        for db in [&indexed, &unindexed] {
+        assert_eq!(membership_steps(&plan(&indexed, &values, scope).await), 1);
+        for (db, db_resolves) in [(&indexed, resolves), (&unindexed, 0)] {
+            let before = resolved(db);
             let rows = db
                 .query(query::QueryRequest::read(values.clone()))
                 .await
                 .unwrap();
+            assert_eq!(resolved(db) - before, db_resolves, "{item} {kind}");
             assert_eq!(uids(&rows["result"]), expected, "{item} {kind}");
+            let before = resolved(db);
             let counted = db
                 .query(query::QueryRequest::read(count.clone()))
                 .await
                 .unwrap();
+            assert_eq!(resolved(db) - before, db_resolves, "{item} {kind}");
             assert_eq!(counted["result"], serde_json::json!(expected.len()));
         }
 

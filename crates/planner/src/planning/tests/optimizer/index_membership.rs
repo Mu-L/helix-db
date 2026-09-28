@@ -920,52 +920,61 @@ fn partial_conjunctions_behind_a_unique_source_keep_the_filter() {
 
 #[test]
 fn equality_seed_residual_stays_a_filter_under_a_count_with_membership() {
-    // Count cursors price their operators at the unknown-input default, so
-    // only a label-scoped predicate pays for the set read there.
-    let plan = executable_traversal(
-        seeded_attributes_where(Predicate::eq("kind", "B"))
-            .has_label("Attribute")
-            .count(),
-        seeded_ctx(),
-    );
-    let counted = plan
-        .steps()
-        .iter()
-        .find_map(|step| match &step.op {
-            ExecOp::Count { plan } => Some(plan.as_ref()),
+    // Count cursors price their operators at the unknown-input default, past
+    // one record batch, where both the label-scoped and the unscoped predicate
+    // pay for their set reads.
+    for (counted, outside_label) in [
+        (
+            seeded_attributes_where(Predicate::eq("kind", "B"))
+                .has_label("Attribute")
+                .count(),
+            crate::ir::NodeMembershipOutsideLabel::Reject,
+        ),
+        (
+            seeded_attributes_where(Predicate::eq("kind", "B")).count(),
+            crate::ir::NodeMembershipOutsideLabel::Evaluate,
+        ),
+    ] {
+        let plan = executable_traversal(counted, seeded_ctx());
+        let counted = plan
+            .steps()
+            .iter()
+            .find_map(|step| match &step.op {
+                ExecOp::Count { plan } => Some(plan.as_ref()),
+                _ => None,
+            })
+            .expect("count step");
+        let ExecCountPlan::Stream(crate::exec::ExecCountStreamPlan { cursor, .. }) = counted else {
+            panic!("expected a streamed count: {counted:#?}");
+        };
+        // The cursor chain from the count down to its source.
+        let chain = core::iter::successors(Some(cursor), |cursor| match cursor {
+            crate::exec::ExecCountCursorPlan::IndexMembership { input, .. }
+            | crate::exec::ExecCountCursorPlan::Expand { input, .. }
+            | crate::exec::ExecCountCursorPlan::Filter { input, .. } => Some(input.as_ref()),
             _ => None,
         })
-        .expect("count step");
-    let ExecCountPlan::Stream(crate::exec::ExecCountStreamPlan { cursor, .. }) = counted else {
-        panic!("expected a streamed count: {counted:#?}");
-    };
-    // The cursor chain from the count down to its source.
-    let chain = core::iter::successors(Some(cursor), |cursor| match cursor {
-        crate::exec::ExecCountCursorPlan::IndexMembership { input, .. }
-        | crate::exec::ExecCountCursorPlan::Expand { input, .. }
-        | crate::exec::ExecCountCursorPlan::Filter { input, .. } => Some(input.as_ref()),
-        _ => None,
-    })
-    .collect::<Vec<_>>();
-    assert!(
-        matches!(
-            chain[..],
-            [
-                crate::exec::ExecCountCursorPlan::IndexMembership { plan: membership, .. },
-                crate::exec::ExecCountCursorPlan::Expand { .. },
-                crate::exec::ExecCountCursorPlan::Expand { .. },
-                crate::exec::ExecCountCursorPlan::Filter { predicate, .. },
-                crate::exec::ExecCountCursorPlan::NodeBitmap(
-                    crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
-                ),
-            ] if membership.label.as_ref() == "Attribute"
-                && membership.outside_label == crate::ir::NodeMembershipOutsideLabel::Reject
-                && predicate.predicate()
-                    == &Predicate::and(vec![Predicate::eq("region", "west")])
-                && key.property == "name"
-        ),
-        "{counted:#?}"
-    );
+        .collect::<Vec<_>>();
+        assert!(
+            matches!(
+                chain[..],
+                [
+                    crate::exec::ExecCountCursorPlan::IndexMembership { plan: membership, .. },
+                    crate::exec::ExecCountCursorPlan::Expand { .. },
+                    crate::exec::ExecCountCursorPlan::Expand { .. },
+                    crate::exec::ExecCountCursorPlan::Filter { predicate, .. },
+                    crate::exec::ExecCountCursorPlan::NodeBitmap(
+                        crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
+                    ),
+                ] if membership.label.as_ref() == "Attribute"
+                    && membership.outside_label == outside_label
+                    && predicate.predicate()
+                        == &Predicate::and(vec![Predicate::eq("region", "west")])
+                    && key.property == "name"
+            ),
+            "{counted:#?}"
+        );
+    }
 }
 
 #[test]
