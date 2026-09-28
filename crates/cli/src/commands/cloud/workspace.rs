@@ -19,12 +19,16 @@ pub async fn run(action: Option<WorkspaceAction>) -> Result<()> {
                     output::info("You are not a member of any workspace");
                     return Ok(());
                 }
-                let mut rows = table::Table::new(["NAME", "SLUG", "REGION", "ID"]);
+                let name = format!("{}NAME", super::linked_prefix(linked.is_some(), false));
+                let mut rows = table::Table::new([name.as_str(), "SLUG", "REGION", "ID"]);
                 for workspace in workspaces {
                     rows.row([
                         format!(
                             "{}{}",
-                            super::linked_marker(linked == Some(workspace.id.as_str())),
+                            super::linked_prefix(
+                                linked.is_some(),
+                                linked == Some(workspace.id.as_str())
+                            ),
                             workspace.label()
                         ),
                         workspace.slug.clone(),

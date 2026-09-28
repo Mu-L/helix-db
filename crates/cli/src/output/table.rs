@@ -108,6 +108,22 @@ pub fn key_values(pairs: &[(&str, String)]) -> String {
         .collect()
 }
 
+/// A resource or container state coloured by health: green when up, red
+/// when failed or unreachable, dim otherwise (pending, not created, …).
+pub fn state(state: &str) -> String {
+    let lower = state.to_lowercase();
+    let healthy =
+        lower.starts_with("up") || matches!(lower.as_str(), "running" | "active" | "ready");
+    let failed = lower.starts_with("exited")
+        || matches!(lower.as_str(), "unreachable" | "failed" | "unknown");
+    let styled = match (healthy, failed) {
+        (true, _) => style(state).green(),
+        (false, true) => style(state).red(),
+        (false, false) => style(state).dim(),
+    };
+    styled.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +155,19 @@ mod tests {
     #[should_panic(expected = "one cell per header")]
     fn rows_must_match_the_header_width() {
         Table::new(["A", "B"]).row(["only one"]);
+    }
+
+    #[test]
+    fn state_colouring_never_changes_the_text() {
+        for state in [
+            "Up 3 minutes",
+            "active",
+            "exited (1)",
+            "not created",
+            "unreachable",
+        ] {
+            assert_eq!(console::strip_ansi_codes(&super::state(state)), state);
+        }
     }
 
     #[test]

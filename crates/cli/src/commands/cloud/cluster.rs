@@ -31,7 +31,7 @@ pub async fn run(action: Option<ClusterAction>) -> Result<()> {
                     rows.row([
                         cluster.label().to_owned(),
                         cluster.access.label().to_owned(),
-                        status_label(&cluster.status),
+                        table::state(&status_label(&cluster.status)),
                         cluster.id.clone(),
                     ]);
                 }

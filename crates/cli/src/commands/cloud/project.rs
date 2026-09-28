@@ -23,12 +23,16 @@ pub async fn run(action: Option<ProjectAction>) -> Result<()> {
                     output::remark("Create one with `helix project create <name>`");
                     return Ok(());
                 }
-                let mut rows = table::Table::new(["NAME", "SLUG", "ID"]);
+                let name = format!("{}NAME", super::linked_prefix(linked.is_some(), false));
+                let mut rows = table::Table::new([name.as_str(), "SLUG", "ID"]);
                 for project in projects {
                     rows.row([
                         format!(
                             "{}{}",
-                            super::linked_marker(linked == Some(project.id.as_str())),
+                            super::linked_prefix(
+                                linked.is_some(),
+                                linked == Some(project.id.as_str())
+                            ),
                             project.label()
                         ),
                         project.slug.clone(),

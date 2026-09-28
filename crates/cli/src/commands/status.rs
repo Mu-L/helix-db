@@ -125,7 +125,7 @@ pub async fn run(instance: Option<String>) -> Result<()> {
                 } => [
                     name.clone(),
                     "local".to_owned(),
-                    styled_state(state),
+                    table::state(state),
                     format!("{url} {}", style(format!("({storage})")).dim()),
                 ],
                 InstanceStatus::Cloud {
@@ -137,7 +137,7 @@ pub async fn run(instance: Option<String>) -> Result<()> {
                 } => [
                     name.clone(),
                     "cloud".to_owned(),
-                    styled_state(state),
+                    table::state(state),
                     match label {
                         Some(label) => format!("{label} {}", style(format!("({database})")).dim()),
                         None => database.clone(),
@@ -211,38 +211,9 @@ async fn cloud_status(
     }
 }
 
-/// Healthy states in green, failures in red, everything else dim.
-fn styled_state(state: &str) -> String {
-    let lower = state.to_lowercase();
-    let styled =
-        if lower.starts_with("up") || matches!(lower.as_str(), "running" | "active" | "ready") {
-            style(state).green()
-        } else if matches!(lower.as_str(), "unreachable" | "failed" | "unknown")
-            || lower.starts_with("exited")
-        {
-            style(state).red()
-        } else {
-            style(state).dim()
-        };
-    styled.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn state_styling_never_changes_the_text() {
-        for state in [
-            "Up 3 minutes",
-            "active",
-            "exited (1)",
-            "not created",
-            "unreachable",
-        ] {
-            assert_eq!(console::strip_ansi_codes(&styled_state(state)), state);
-        }
-    }
 
     #[test]
     fn statuses_serialize_with_their_kind() {

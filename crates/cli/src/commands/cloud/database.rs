@@ -22,17 +22,18 @@ pub async fn run(action: Option<DatabaseAction>) -> Result<()> {
                     output::remark("Create one with `helix database create <name>`");
                     return Ok(());
                 }
-                let mut rows = table::Table::new(["NAME", "KIND", "STATUS", "REF"]);
+                let name = format!("{}NAME", super::linked_prefix(!linked.is_empty(), false));
+                let mut rows = table::Table::new([name.as_str(), "KIND", "STATUS", "REF"]);
                 for database in databases {
                     let reference = database.reference();
                     rows.row([
                         format!(
                             "{}{}",
-                            super::linked_marker(linked.contains(&reference)),
+                            super::linked_prefix(!linked.is_empty(), linked.contains(&reference)),
                             database.label()
                         ),
                         database.kind().to_owned(),
-                        status_label(database.status()),
+                        table::state(&status_label(database.status())),
                         reference.to_string(),
                     ]);
                 }

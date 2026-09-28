@@ -58,13 +58,15 @@ fn slugify(name: &str) -> Result<String> {
     Ok(slug)
 }
 
-/// Prefix for a table's first column: an orange dot on the row this
-/// directory is linked to. Every row gets the same width so columns align.
-fn linked_marker(linked: bool) -> String {
-    if linked {
-        format!("{} ", style("●").color256(208))
-    } else {
-        "  ".to_owned()
+/// Prefix for a table's name column marking the row this directory is
+/// linked to with an orange dot. Rows (and the header, passed `linked =
+/// false`) get the same width so columns align; with no link at all there is
+/// no prefix.
+fn linked_prefix(link_present: bool, linked: bool) -> String {
+    match (link_present, linked) {
+        (false, _) => String::new(),
+        (true, true) => format!("{} ", style("●").color256(208)),
+        (true, false) => "  ".to_owned(),
     }
 }
 
@@ -94,10 +96,11 @@ mod tests {
     }
 
     #[test]
-    fn linked_markers_keep_columns_aligned() {
+    fn linked_prefixes_keep_columns_aligned() {
         assert_eq!(
-            console::measure_text_width(&linked_marker(true)),
-            console::measure_text_width(&linked_marker(false))
+            console::measure_text_width(&linked_prefix(true, true)),
+            console::measure_text_width(&linked_prefix(true, false))
         );
+        assert_eq!(linked_prefix(false, true), "");
     }
 }
