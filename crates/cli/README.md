@@ -6,6 +6,8 @@ The v3 CLI manages local Helix instances and WorkOS-session-authenticated Helix 
 - Cloud discovery/resources: `workspace`, `project`, `cluster`, `database`, `service-credential`, `api`.
 - Cloud queries: `query` and `shell` execute through the backend query broker.
 - Authentication: `auth login|status|logout` stores only a rotating WorkOS session.
+- Output: results go to stdout and progress to stderr; the global `--json` flag prints the result as JSON and never prompts.
+- Cloud arguments accept an ID, slug, or name and default to the project and databases linked in `helix.toml`.
 
 The Cloud CLI accepts no API-key login, service-credential login, direct gateway path, or custom
 query authorization. Tenant creation returns a default read-write application key once for direct

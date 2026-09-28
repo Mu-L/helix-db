@@ -62,13 +62,48 @@ These flags work with every command.
 
 | Flag | Description |
 | --- | --- |
+| `--json` | Print the result as compact JSON on stdout, print nothing else, and never prompt. Conflicts with `--quiet` and `--verbose`. |
 | `--quiet` | Errors and final result only. |
 | `-v`, `--verbose` | Detailed output with timing information. |
 | `-h`, `--help` | Show help. `helix <command> --help` shows that command's options. |
 | `-V`, `--version` | Show the CLI version. |
 
+## Output
+
+- stdout carries only the command's result: tables, detail views, query results, one-time tokens, or the `--json` payload. It is always safe to pipe.
+- stderr carries everything else: progress sessions, spinners, warnings, hints, and errors.
+- Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`.
+
+With `--json`, a failed command prints one JSON object on stderr and exits with status `1`, or `2`
+for invalid arguments. Only `message` is always present:
+
+```json
+{"error":{"message":"...","context":"...","caused_by":"...","hint":"...","candidates":[{"id":"...","name":"..."}]}}
+```
+
+## Cloud resource resolution
+
+Cloud commands never require raw IDs. Workspace, project, cluster, and database arguments are
+optional and accept an ID, slug, or display name, matched in that order (names are
+case-insensitive). Databases also accept `tenant:<id>` and `cluster:<id>`. Application keys and
+service credentials are passed by ID or name.
+
+An omitted resource resolves to:
+
+1. the project or databases linked in `helix.toml`;
+2. the only candidate, announced on stderr (for example `Using project <name>`);
+3. an interactive picker, in a terminal and without `--json`;
+4. otherwise, an error that lists the candidates and how to pass one.
+
+There is no global or persisted workspace or project selection. A group run without a subcommand
+lists its resources, so `helix project` is the same as `helix project list`. Lists follow API
+pagination.
+
 ## Removed and unsupported commands
 
-`push`, `sync`, `auth create-key`, `workspace switch`, and `project update` are not commands.
+`push`, `sync`, `config`, `auth create-key`, `workspace switch`, and `project update` are not commands.
 `compile`, `check`, and `deploy` were removed; running them prints a pointer to the current workflow.
-Cloud resource lifecycle is exposed only where documented above.
+`--format` and `--compact` were replaced by `--json`; the inline request body of `helix query` and
+`helix api` is now `--body`. `--workspace-id`, `--project-id`, and `--cluster-id` were replaced by
+the resolution above, and `helix logs --range` by plain `--start`/`--end`. Cloud resource lifecycle
+is exposed only where documented above.

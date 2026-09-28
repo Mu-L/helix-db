@@ -58,13 +58,13 @@ pub enum InitTarget {
         /// Cloud instance name
         #[arg(short, long, default_value = "production")]
         name: String,
-        /// Cloud database as cluster:<id> or tenant:<id>
+        /// Database ID, slug, name, or cluster:<id> / tenant:<id>; prompts when omitted
         #[arg(long)]
         database: Option<String>,
-        /// Owning project ID; required when the database cannot be derived
+        /// Project ID, slug, or name to pick the database from
         #[arg(long)]
         project: Option<String>,
-        /// Owning workspace ID
+        /// Workspace ID, slug, or name
         #[arg(long)]
         workspace: Option<String>,
         /// Install the Helix agent skills + docs MCP (prompted when interactive)
@@ -122,13 +122,13 @@ pub enum AddTarget {
         /// Cloud instance name
         #[arg(short, long)]
         name: String,
-        /// Cloud database as cluster:<id> or tenant:<id>
+        /// Database ID, slug, name, or cluster:<id> / tenant:<id>; prompts when omitted
         #[arg(long)]
         database: Option<String>,
-        /// Owning project ID; defaults to the linked project
+        /// Project ID, slug, or name; defaults to the linked project
         #[arg(long)]
         project: Option<String>,
-        /// Owning workspace ID
+        /// Workspace ID, slug, or name
         #[arg(long)]
         workspace: Option<String>,
     },

@@ -6706,21 +6706,22 @@ Claude Code → OpenAI Codex → OpenCode → Cursor Agent.
 
 ```bash
 helix auth login
-helix workspace list
-helix project list --workspace-id <workspace-id>
-helix database list --project <project-id>
-
-helix project link <project-id>
-helix add cloud --name production --database tenant:<tenant-id>
-helix query production --file examples/request.json
+mkdir my-cloud-app && cd my-cloud-app
+helix init cloud
+helix query production --file request.json
 ```
+
+`helix init cloud` picks your workspace, project, and database, using the only one of each or
+asking you to choose, and links them in `helix.toml`. Later Cloud commands in the directory, such
+as `helix database` or `helix logs`, need no IDs or flags.
 
 Cloud commands use only the rotating WorkOS session. Query execution goes through the backend broker
 and requires an independent `database.query.read` or `database.query.write` grant. The CLI does not
 need a gateway URL, application key, service credential, or sync step.
 
-If a command cannot derive one target, pass an explicit workspace/project or `cluster:<id>` /
-`tenant:<id>`. Stable links live only in the current project's `helix.toml`.
+When a command cannot choose a resource on its own, pass it by ID, slug, or name, for example
+`--project <project>` or `tenant:<id>`. Stable links live only in the current project's
+`helix.toml`. See [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
 
   <Card title="Local workflow" href="/cli/workflows/local">Run and query a local instance</Card>
   <Card title="Cloud workflow" href="/cli/workflows/helix_cloud">Use the session-authenticated Cloud CLI</Card>
@@ -6781,7 +6782,7 @@ Use the manual flow below when you want to scaffold and run each step yourself.
     helix query dev --file examples/request.json
     ```
 
-    The example counts `User` nodes. Try `--compact` to print on one line, or
+    The example counts `User` nodes. Try `--json` to print compact JSON only, or
     `--warm` to populate the standalone process caches while returning the normal
     response.
   </Step>
@@ -6858,7 +6859,7 @@ helix logs dev --follow
 helix restart dev
 ```
 
-`helix restart` falls back to a fresh `helix start` if the container has been removed.
+`helix restart` fails if the container has been removed; run `helix start` to create it again.
 
 ## Multiple local instances
 
@@ -6883,7 +6884,7 @@ helix logs dev               # one-shot dump from docker/podman logs
 helix logs dev --follow      # stream
 ```
 
-`--range`, `--start`, and `--end` are Helix Cloud-only and rejected for local instances.
+`--start`, `--end`, and `--json` are Helix Cloud-only and rejected for local instances.
 
 ## Cleaning up
 
@@ -6935,18 +6936,14 @@ queries against it. You need a Helix Cloud account and at least one database; se
     helix auth status
     ```
   </Step>
-  <Step title="Discover a target">
+  <Step title="Link a project and database">
     ```bash
-    helix workspace list
-    helix project list --workspace-id <workspace-id>
-    helix database list --project <project-id>
+    helix init cloud
     ```
-  </Step>
-  <Step title="Link the current project and database">
-    ```bash
-    helix project link <project-id>
-    helix add cloud --name production --database tenant:<tenant-id>
-    ```
+
+    The CLI picks your workspace, project, and database: it uses the only one of each or
+    asks you to choose. It writes the project and a `production` database link to
+    `helix.toml`. To link another database later, run `helix add cloud --name <name>`.
   </Step>
   <Step title="Run a query through the broker">
     ```bash
@@ -6954,6 +6951,21 @@ queries against it. You need a Helix Cloud account and at least one database; se
     helix shell production
     ```
   </Step>
+  <Step title="Inspect the linked resources">
+    ```bash
+    helix status
+    helix database
+    helix logs production
+    ```
+
+    Inside a linked project, Cloud commands default to its project and databases, so
+    they need no IDs.
+  </Step>
+
+Pass a resource by ID, slug, or name when you want a different one, for example
+`helix database list --project <project>` or `helix query tenant:<id> --file request.json`. In
+scripts, add `--json` for machine-readable output; commands then never prompt. See
+[Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
 
 ## How Cloud queries are authorized
 
@@ -7018,9 +7030,11 @@ Cloud `database` accepts only `tenant:<id>` or `cluster:<id>`. A physical shared
 database target. Unknown Cloud fields are rejected. In particular, gateway URLs, query auth headers,
 query auth environment variables, source snapshots, sync metadata, and query bundles are invalid.
 
-Target resolution uses an explicit flag first, then an explicit database reference, the linked
-database, or the linked project only when exactly one database is eligible. Ambiguous commands print
-candidates and require `--workspace`, `--project`, `cluster:<id>`, or `tenant:<id>`.
+`helix init cloud`, `helix add cloud`, and `helix project link` write `[project] id` and
+`workspace_id`. Cloud commands run in the project then default to that project and its linked
+databases. An explicit argument (ID, slug, or name) always wins; without a link, a command uses the
+only candidate, prompts in a terminal, or fails and lists the candidates. See
+[Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
 
 The strict credential file stores only `access_token`, rotating `refresh_token`, `expires_at`, and
 `email`. It is written atomically with mode `0600`. Do not edit it or put application keys or service
@@ -7045,8 +7059,16 @@ cannot be used to log the CLI in.
 
 ## Ambiguous Cloud target
 
-Pass `--workspace`, `--project`, `cluster:<id>`, or `tenant:<id>`. Alternatively use
-`helix project link` and `helix add cloud` to persist stable project/database linkage in `helix.toml`.
+Without a terminal, or with `--json`, the CLI cannot prompt, so it fails and lists the candidates.
+Pass one by ID, slug, or name, for example `--workspace <workspace>`, `--project <project>`, or a
+database as `tenant:<id>`. If a name matches several resources, use the ID or slug instead.
+Alternatively run `helix project link` and `helix add cloud` to persist stable project/database
+linkage in `helix.toml`.
+
+## Confirmation required
+
+Destructive Cloud commands fail with `this action needs confirmation` when they cannot prompt. Re-run
+with `--yes` after checking the target.
 
 ## Query permission denied
 
@@ -7124,16 +7146,51 @@ These flags work with every command.
 
 | Flag | Description |
 | --- | --- |
+| `--json` | Print the result as compact JSON on stdout, print nothing else, and never prompt. Conflicts with `--quiet` and `--verbose`. |
 | `--quiet` | Errors and final result only. |
 | `-v`, `--verbose` | Detailed output with timing information. |
 | `-h`, `--help` | Show help. `helix <command> --help` shows that command's options. |
 | `-V`, `--version` | Show the CLI version. |
 
+## Output
+
+- stdout carries only the command's result: tables, detail views, query results, one-time tokens, or the `--json` payload. It is always safe to pipe.
+- stderr carries everything else: progress sessions, spinners, warnings, hints, and errors.
+- Destructive Cloud commands (`project delete`, `database delete`, `database key revoke`, `service-credential revoke`) ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `-y`/`--yes`.
+
+With `--json`, a failed command prints one JSON object on stderr and exits with status `1`, or `2`
+for invalid arguments. Only `message` is always present:
+
+```json
+{"error":{"message":"...","context":"...","caused_by":"...","hint":"...","candidates":[{"id":"...","name":"..."}]}}
+```
+
+## Cloud resource resolution
+
+Cloud commands never require raw IDs. Workspace, project, cluster, and database arguments are
+optional and accept an ID, slug, or display name, matched in that order (names are
+case-insensitive). Databases also accept `tenant:<id>` and `cluster:<id>`. Application keys and
+service credentials are passed by ID or name.
+
+An omitted resource resolves to:
+
+1. the project or databases linked in `helix.toml`;
+2. the only candidate, announced on stderr (for example `Using project <name>`);
+3. an interactive picker, in a terminal and without `--json`;
+4. otherwise, an error that lists the candidates and how to pass one.
+
+There is no global or persisted workspace or project selection. A group run without a subcommand
+lists its resources, so `helix project` is the same as `helix project list`. Lists follow API
+pagination.
+
 ## Removed and unsupported commands
 
-`push`, `sync`, `auth create-key`, `workspace switch`, and `project update` are not commands.
+`push`, `sync`, `config`, `auth create-key`, `workspace switch`, and `project update` are not commands.
 `compile`, `check`, and `deploy` were removed; running them prints a pointer to the current workflow.
-Cloud resource lifecycle is exposed only where documented above.
+`--format` and `--compact` were replaced by `--json`; the inline request body of `helix query` and
+`helix api` is now `--body`. `--workspace-id`, `--project-id`, and `--cluster-id` were replaced by
+the resolution above, and `helix logs --range` by plain `--start`/`--end`. Cloud resource lifecycle
+is exposed only where documented above.
 
 # helix add
 
@@ -7148,8 +7205,8 @@ in it. Works for local instances and Helix Cloud database links.
 
 ```bash
 helix add local --name <name> [--port 6969] [--disk | --storage-uri s3://bucket/prefix]
-helix add cloud --name <name> [--database tenant:<id>|cluster:<id>] \
-  [--project <id>] [--workspace <id>]
+helix add cloud --name <name> [--database <database>] \
+  [--project <project>] [--workspace <workspace>]
 ```
 
 ## Subcommands
@@ -7167,6 +7224,7 @@ Run `helix add` with no subcommand in a terminal to choose interactively.
 | --- | --- | --- |
 | `-p`, `--path <DIR>` | Project directory. Accepted before or after the subcommand. | Current directory |
 | `-n`, `--name <NAME>` | Instance name. Required. | — |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 ### `helix add local`
 
@@ -7183,17 +7241,18 @@ Run `helix add` with no subcommand in a terminal to choose interactively.
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--database <REF>` | Cloud database as `tenant:<id>` or `cluster:<id>`. | The project's only database |
-| `--project <ID>` | Owning project ID. | Project linked in `helix.toml` |
-| `--workspace <ID>` | Owning workspace ID. | Workspace linked in `helix.toml` |
+| `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database, then a picker |
+| `--project <PROJECT>` | Owning project ID, slug, or name. | Project linked in `helix.toml` |
+| `--workspace <WORKSPACE>` | Workspace ID, slug, or name to find the project in. | Workspace linked in `helix.toml` |
 
 ## Behavior
 
 - Fails if an instance with the same name already exists in `helix.toml`.
 - Without a subcommand, the CLI prompts for the instance type in a terminal and fails in non-interactive shells.
 - `--s3-region`, `--s3-endpoint-url`, and `--s3-allow-http` require `--storage-uri`.
-- `add cloud` uses the WorkOS session, verifies the selected database, and writes only stable IDs to `helix.toml`.
-- If a project has multiple eligible databases, pass `--database` explicitly.
+- `add cloud` uses the WorkOS session and resolves the database as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
+- `add cloud` writes only stable IDs to `helix.toml`, and sets `[project] id` and `workspace_id` when they are missing.
+- `add cloud` refuses a database from a different project than the one `helix.toml` is linked to. Relink with [`helix project link`](/cli/command-reference/project) first.
 - A `cluster:<id>` target must be a dedicated cluster; shared clusters are not database targets.
 
 ## Examples
@@ -7205,8 +7264,11 @@ helix add local --name staging --port 7070
 # Add a local instance with persistent on-disk storage
 helix add local --name qa --disk
 
+# Link a Cloud database from the linked project, picking one if there are several
+helix add cloud --name production
+
 # Link a specific Cloud database
-helix add cloud --name production --database tenant:<id>
+helix add cloud --name analytics --database tenant:<id>
 ```
 
 ## Related
@@ -7237,15 +7299,21 @@ helix auth logout
 | Subcommand | Description |
 | --- | --- |
 | `login` | Sign in through WorkOS in your browser and store the session. |
-| `status` | Verify the session and show the signed-in user and workspace membership count. |
+| `status` | Verify the session and show the signed-in email and your workspaces by name. |
 | `logout` | Revoke the session when possible and delete the local credential file. |
+
+## Options
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--json` | Print the result as JSON on stdout and never prompt. `status` prints `{"email":"...","workspaces":[{"id":"...","name":"..."}]}`. | Off |
 
 ## Behavior
 
 ### Login
 
-- `login` requires an interactive terminal.
-- It starts WorkOS PKCE in a browser (and prints the URL in case the browser does not open), then receives the loopback callback on `http://localhost:8765/callback`. The login times out after 5 minutes.
+- `login` requires an interactive terminal, so it fails with `--json`.
+- It starts WorkOS PKCE in a browser (and prints the URL in case the browser does not open), then shows a spinner while it waits for the loopback callback on `http://localhost:8765/callback`. The login times out after 5 minutes.
 - If WorkOS requires email verification, the CLI prompts for the code.
 - It hydrates all current workspace memberships and stores only the rotating WorkOS session in `~/.helix/credentials` (or `$HELIX_HOME/credentials`).
 
@@ -7257,7 +7325,7 @@ helix auth logout
 
 ### Status and logout
 
-- `status` verifies the session with the Helix Cloud API and reports the signed-in email and membership count.
+- `status` verifies the session by listing your workspaces through the Helix Cloud API, then prints `Email` and `Workspaces` (by name).
 - `logout` asks the Helix Cloud API to revoke the session when possible and always deletes the local file.
 
 ## Examples
@@ -7285,16 +7353,16 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-Send an authenticated request to any `/v1/...` path of the Helix Cloud API (called WFE in CLI help)
-using your WorkOS session, and print the JSON response. Cloud only. Use a resource-specific command
+Send an authenticated request to any `/v1/...` path of the Helix Cloud API using your WorkOS
+session, and print the JSON response. Cloud only. Use a resource-specific command
 when one exists.
 
 ## Usage
 
 ```bash
 helix api get <path>
-helix api post <path> [--json '<body>']
-helix api patch <path> [--json '<body>']
+helix api post <path> [--body '<json>']
+helix api patch <path> [--body '<json>']
 helix api delete <path>
 ```
 
@@ -7317,12 +7385,13 @@ helix api delete <path>
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--json <BODY>` | Request body for `post` and `patch`. Must be valid JSON. | `{}` |
+| `--body <JSON>` | Request body for `post` and `patch`. Must be valid JSON. | `{}` |
+| `--json` | Print the response as compact JSON. | Off (highlighted, pretty-printed) |
 
 ## Behavior
 
 - Only absolute `/v1/...` paths are accepted. Absolute URLs and direct gateway paths (the database endpoint used with application keys) are rejected.
-- The response is printed as pretty-printed JSON.
+- The response is printed on stdout as syntax-highlighted, pretty-printed JSON, or as compact JSON with `--json`.
 - The command uses the same rotating WorkOS session as all other Cloud commands.
 - If the API rejects an expired token before handling the request, the CLI refreshes the session and retries once. No other failure is retried.
 
@@ -7330,8 +7399,8 @@ helix api delete <path>
 
 ```bash
 helix api get /v1/workspaces
-helix api post /v1/example --json '{"value":"example"}'
-helix api patch /v1/example --json '{"value":"updated"}'
+helix api post /v1/example --body '{"value":"example"}'
+helix api patch /v1/example --body '{"value":"updated"}'
 helix api delete /v1/example
 ```
 
@@ -7420,52 +7489,54 @@ cluster. Cloud only; these commands are read-only.
 ## Usage
 
 ```bash
-helix cluster list [--project-id <id>] [--workspace-id <id>] [--format human|json]
-helix cluster get <cluster-id> [--format human|json]
-helix cluster indexes [--cluster-id <id>] [--format human|json]
+helix cluster [list] [--workspace <workspace>] [--project <project>]
+helix cluster get [CLUSTER] [--workspace <workspace>] [--project <project>]
+helix cluster indexes [CLUSTER] [--workspace <workspace>] [--project <project>]
 ```
 
 ## Subcommands
 
 | Subcommand | Description |
 | --- | --- |
-| `list` | List clusters in a project or workspace. |
-| `get` | Show one cluster by ID. |
+| `list` | List clusters in a project or workspace. The default when no subcommand is given. |
+| `get` | Show one cluster. |
 | `indexes` | List the active indexes in a cluster. Alias: `indices`. |
 
 ## Arguments
 
 | Argument | Description |
 | --- | --- |
-| `CLUSTER_ID` | Cluster to show with `get`. Required. |
+| `CLUSTER` | `get`, `indexes`: cluster ID (or `cluster:<id>`), slug, or name. Defaults to the one linked `cluster:<id>` database, then the project's only cluster. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--project-id <ID>` | `list`: project whose clusters to list. | Project linked in `helix.toml` |
-| `--workspace-id <ID>` | `list`: workspace whose clusters to list. | Linked workspace, or the project's workspace |
-| `--cluster-id <ID>` | `indexes`: cluster to inspect. | The linked `cluster:<id>` database |
-| `--format <FORMAT>` | Output format: `human` or `json`. | `human` |
+| `--workspace <WORKSPACE>` | Workspace ID, slug, or name. `list` lists the whole workspace when it is given without `--project`. | Linked workspace, then the only workspace |
+| `--project <PROJECT>` | Project ID, slug, or name to list or search in. | Project linked in `helix.toml` |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 ## Behavior
 
-- The command uses explicit IDs or the current `helix.toml` link. It does not persist a workspace.
-- `list` needs `--project-id`, `--workspace-id`, or a linked project.
-- `indexes` without `--cluster-id` needs exactly one linked Cloud database, and it must be a `cluster:<id>` database; a linked tenant fails.
+- Arguments and defaults resolve as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
+- `list` shows the clusters of `--project` or the linked project. Without either, it lists the workspace's clusters.
+- `list` prints `NAME`, `ACCESS` (shared or dedicated), `STATUS`, and `ID`.
 - Dedicated-cluster create/delete, networking, regions/SKUs, branches, and backups are outside the CLI.
 
 ## Examples
 
 ```bash
 # List clusters for the linked project
-helix cluster list
+helix cluster
 
-# Show one cluster as JSON
-helix cluster get <cluster-id> --format json
+# List every cluster in a workspace
+helix cluster list --workspace <workspace>
 
-# List the active indexes of a specific cluster
-helix cluster indexes --cluster-id <cluster-id>
+# Show one cluster by name as JSON
+helix cluster get <cluster> --json
+
+# List the active indexes of the linked dedicated cluster
+helix cluster indexes
 ```
 
 ## Related
@@ -7486,23 +7557,24 @@ application keys your software uses to reach them. Cloud only.
 ## Usage
 
 ```bash
-helix database list [--project <project-id>]
-helix database get [tenant:<id>|cluster:<id>]
-helix database indexes [tenant:<id>|cluster:<id>]
-helix database create [--project <id>] --name <name> --slug <slug> --plan <plan>
-helix database create [--project <id>] --cluster <cluster-id> --name <name> --slug <slug>
-helix database delete [tenant:<id>] [--yes]
+helix database [list] [--workspace <workspace>] [--project <project>]
+helix database get [DATABASE]
+helix database indexes [DATABASE]
+helix database create <NAME> [--slug <slug>] [--plan <plan> | --cluster <cluster>]
+helix database delete [DATABASE] [--yes]
 
-helix database key create [tenant:<id>|cluster:<id>] --access read-only|read-write [--name <name>]
-helix database key list [tenant:<id>|cluster:<id>]
-helix database key revoke [tenant:<id>|cluster:<id>] --key <key-id> [--yes]
+helix database key create --access read-only|read-write [--name <name>] [--database <database>]
+helix database key list [--database <database>]
+helix database key revoke <KEY> [--database <database>] [--yes]
 ```
+
+Every subcommand also accepts `--workspace` and `--project`.
 
 ## Subcommands
 
 | Subcommand | Description |
 | --- | --- |
-| `list` | List the dedicated-cluster and tenant databases in a project. |
+| `list` | List the dedicated-cluster and tenant databases in a project. The default when no subcommand is given. |
 | `get` | Show one database. |
 | `indexes` | List the database's active indexes. Alias: `indices`. |
 | `create` | Create a tenant database and print its default read-write application key once. |
@@ -7515,45 +7587,50 @@ helix database key revoke [tenant:<id>|cluster:<id>] --key <key-id> [--yes]
 
 | Argument | Description |
 | --- | --- |
-| `DATABASE` | `cluster:<id>` for a dedicated database or `tenant:<id>` for a tenant. Omit it only when `helix.toml` links exactly one Cloud database. |
+| `DATABASE` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. Defaults to the one database linked in `helix.toml`, then the project's only database. `delete` accepts tenants only. |
+| `NAME` | `create`: database display name. Required. |
+| `KEY` | `key revoke`: key ID or name. Required. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--project <ID>` | `list`, `create`: owning project. | Project linked in `helix.toml` |
-| `--name <NAME>` | `create`: database name (required). `key create`: optional key name. | — |
-| `--slug <SLUG>` | `create`: database slug. Required. | — |
-| `--plan <PLAN>` | `create`: plan for a shared tenant database. Required without `--cluster`; not allowed with it. | — |
-| `--cluster <CLUSTER_ID>` | `create`: create the tenant inside this dedicated cluster. | — |
+| `--workspace <WORKSPACE>` | Workspace ID, slug, or name to search in. | Linked workspace, then the only workspace |
+| `--project <PROJECT>` | Project ID, slug, or name that owns the database. | Project linked in `helix.toml` |
+| `--database <DATABASE>` | `key create`, `key list`, `key revoke`: the database, in the same forms as `DATABASE`. | Same as `DATABASE` |
+| `--slug <SLUG>` | `create`: URL-safe database slug. | Derived from `NAME` |
+| `--plan <PLAN>` | `create`: plan code for a shared tenant database. Not allowed with `--cluster`. | Prompted in a terminal; required otherwise |
+| `--cluster <CLUSTER>` | `create`: dedicated cluster ID, slug, or name to create the tenant on. | — |
 | `--access <ACCESS>` | `key create`: `read-only` or `read-write`. Required. | — |
-| `--key <KEY_ID>` | `key revoke`: key to revoke. Required. | — |
-| `-y`, `--yes` | `delete`, `key revoke`: skip the confirmation prompt. Required in non-interactive shells. | Off |
-| `--format <FORMAT>` | `list`, `get`, `indexes`, `create`, `key list`: `human` or `json`. | `human` |
+| `--name <NAME>` | `key create`: optional key name. | — |
+| `-y`, `--yes` | `delete`, `key revoke`: skip the confirmation prompt. Required without a terminal or with `--json`. | Off |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 ## Behavior
 
-- `list` includes dedicated clusters and tenants in the project; shared clusters are not listed.
+- Arguments and defaults resolve as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution). When `helix.toml` links several databases, the CLI picks among them in a terminal.
+- `list` includes dedicated clusters and tenants in the project and marks linked databases; shared clusters are not listed.
 - `create` always creates a tenant database, either on a shared plan (`--plan`) or inside a dedicated cluster (`--cluster`).
-- Creating a database creates a default read-write application key and prints its raw token once. The session-authenticated CLI never stores or uses it.
+- Creating a database creates a default read-write application key and prints its raw token once on stdout. With `--json`, the full create response, including the token, is printed instead. The session-authenticated CLI never stores or uses the key.
 - Additional key creation is explicit, and each new raw token is also printed once. `key create` prints only the token on stdout, so you can capture it in a script.
 - Application keys are for software that calls the gateway (the Cloud database endpoint your application connects to) directly.
-- `delete` accepts only `tenant:<id>`. Dedicated-cluster create/delete lifecycle is not supported by this CLI.
+- `delete` and `key revoke` ask for confirmation in a terminal. Without one, or with `--json`, they fail before any request unless you pass `--yes`.
+- `delete` removes tenant databases only. Dedicated-cluster create/delete lifecycle is not supported by this CLI.
 
 ## Examples
 
 ```bash
 # List databases in the linked project
-helix database list
+helix database
 
 # Create a tenant database on a shared plan
-helix database create --project <id> --name <name> --slug <slug> --plan <plan>
+helix database create orders --plan <plan>
 
-# Create a read-only application key and save the token
-helix database key create tenant:<id> --access read-only --name reporting > reporting.key
+# Create a read-only application key for the linked database and save the token
+helix database key create --access read-only --name reporting > reporting.key
 
-# Revoke a key without a prompt
-helix database key revoke tenant:<id> --key <key-id> --yes
+# Revoke a key by name without a prompt
+helix database key revoke reporting --database orders --yes
 ```
 
 ## Related
@@ -7596,10 +7673,10 @@ helix delete <INSTANCE> [OPTIONS]
 - For Helix Cloud instances, only the `[enterprise.<name>]` block in `helix.toml` is removed — the database itself is untouched.
 - Remote S3 object-store data is not deleted.
 - The CLI refuses to delete the last instance in `helix.toml`; add a replacement first.
-- In a TTY, `helix delete` prints a warning and asks for confirmation. In non-TTY environments it refuses to run without `--yes`:
+- In a TTY, `helix delete` prints a warning and asks for confirmation. Without a TTY, or with `--json`, it refuses to run without `--yes`:
 
   ```text
-  Refusing to delete '<instance>' non-interactively. Re-run with --yes to confirm.
+  refusing to delete '<instance>' without confirmation
   ```
 
 ## Examples
@@ -7673,8 +7750,8 @@ Helix Cloud database link. Local or Cloud.
 
 ```bash
 helix init local [--name dev] [--port 6969] [--disk | --storage-uri s3://bucket/prefix]
-helix init cloud [--name production] [--database tenant:<id>|cluster:<id>] \
-  [--project <id>] [--workspace <id>]
+helix init cloud [--name production] [--database <database>] \
+  [--project <project>] [--workspace <workspace>]
 ```
 
 ## Subcommands
@@ -7694,6 +7771,7 @@ instance in non-interactive shells.
 | `-p`, `--path <DIR>` | Project directory. Created if missing. | Prompted in a terminal; otherwise the current directory |
 | `--skills` | Install the Helix agent skills and docs MCP without prompting. | Prompted in a terminal; skipped otherwise |
 | `--no-skills` | Skip installing the Helix agent skills and docs MCP. | — |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 `--path`, `--skills`, and `--no-skills` can be passed before or after the subcommand.
 
@@ -7714,16 +7792,17 @@ instance in non-interactive shells.
 | Flag | Description | Default |
 | --- | --- | --- |
 | `-n`, `--name <NAME>` | Cloud instance name. | `production` |
-| `--database <REF>` | Cloud database as `tenant:<id>` or `cluster:<id>`. | The project's only database |
-| `--project <ID>` | Owning project ID. Required when `--database` is omitted. | Derived from `--database` |
-| `--workspace <ID>` | Owning workspace ID. | The project's workspace |
+| `--database <DATABASE>` | Database ID, slug, or name, or `tenant:<id>` / `cluster:<id>`. | The project's only database, then a picker |
+| `--project <PROJECT>` | Owning project ID, slug, or name. Not needed with a `tenant:<id>` / `cluster:<id>` database. | The workspace's only project, then a picker |
+| `--workspace <WORKSPACE>` | Workspace ID, slug, or name to find the project in. | Your only workspace, then a picker |
 
 ## Behavior
 
 - Fails if `helix.toml` already exists in the project directory.
 - Creates `.helix/` for instance state and adds `.helix/`, `.env`, `target/`, and `*.log` to `.gitignore` when missing.
 - `init local` also writes `examples/request.json` and an `AGENTS.md` (never overwriting an existing one), and warns if Docker or Podman is unavailable.
-- Cloud init authenticates through the WorkOS session and resolves the database from explicit flags or an unambiguous project.
+- Cloud init authenticates through the WorkOS session and resolves workspace, then project, then database as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution). It ignores the link of any enclosing project.
+- Cloud init writes `[project] id` and `workspace_id` along with the `[enterprise.<name>]` link, so later Cloud commands in the directory need no flags.
 - It stores stable linkage only. It has no gateway URL (database endpoint) or query-auth options.
 - The skills install runs through `npx`; if it fails, the project is still created and the CLI prints a warning.
 
@@ -7736,7 +7815,10 @@ helix init local
 # Local project with persistent on-disk storage, in a new directory
 helix init local --disk --path my-app
 
-# Link a Cloud database, skipping the skills install
+# Pick a Cloud workspace, project, and database interactively
+helix init cloud
+
+# Link a specific Cloud database, skipping the skills install
 helix init cloud --database tenant:<id> --no-skills
 ```
 
@@ -7760,31 +7842,31 @@ Local and Cloud.
 
 ```bash
 helix logs [INSTANCE] [--follow]
-helix logs [CLOUD_INSTANCE] [--range [--start <RFC3339>] [--end <RFC3339>]]
+helix logs [CLOUD_INSTANCE] [--start <RFC3339>] [--end <RFC3339>]
 ```
 
 ## Arguments
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Instance name from `helix.toml`. If omitted, the CLI prompts in a TTY when there are several instances; otherwise it uses `dev` or the only instance. |
+| `INSTANCE` | Instance name from `helix.toml`. If omitted, the CLI uses `dev`, then the only instance, then a picker in a terminal; otherwise it fails and lists the instances. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
 | `-f`, `--follow` | Local only: keep streaming new log lines. | Off |
-| `-r`, `--range` | Cloud only: enable `--start` and `--end`. | Off |
-| `--start <TIME>` | Cloud only: start of the range, as an RFC 3339 timestamp. Requires `--range`. | One hour before `--end` |
-| `--end <TIME>` | Cloud only: end of the range, as an RFC 3339 timestamp. Requires `--range`. | Now |
+| `--start <TIME>` | Cloud only: start of the window, as an RFC 3339 timestamp. | One hour before `--end` |
+| `--end <TIME>` | Cloud only: end of the window, as an RFC 3339 timestamp. | Now |
+| `--json` | Cloud only: print the query errors as a JSON array. | Off |
 
 ## Behavior
 
-- Local logs use Docker/Podman and may follow. `--range`, `--start`, and `--end` are rejected for local instances.
+- Local logs are plain text from Docker/Podman and may follow. `--start`, `--end`, and `--json` are rejected for local instances.
 - Cloud logs use the WorkOS session and the linked database's recent query-error endpoint on the Helix Cloud API; they never contact the database gateway that applications use.
-- Each Cloud error prints as one line: timestamp, query name, and error output.
+- Cloud errors print as a table with `TIME`, `QUERY`, and `ERROR` columns. An empty window prints a message naming the instance and time range.
+- `--start` must be before `--end`. Without either, the window is the last hour.
 - Cloud follow is not supported.
-- Without explicit times, the Cloud range is the last hour.
 
 ## Examples
 
@@ -7798,8 +7880,8 @@ helix logs dev --follow
 # Recent query errors for a Cloud instance (last hour)
 helix logs production
 
-# Query errors in an explicit window
-helix logs production --range --start 2026-01-01T00:00:00Z --end 2026-01-01T06:00:00Z
+# Query errors in an explicit window, as JSON
+helix logs production --start 2026-01-01T00:00:00Z --end 2026-01-01T06:00:00Z --json
 ```
 
 ## Related
@@ -7833,15 +7915,21 @@ helix metrics <SUBCOMMAND>
 | `off` | Disable all metrics collection. |
 | `status` | Show current metrics configuration and when it was last updated. |
 
+## Options
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--json` | Print the result as JSON on stdout. `status` prints `level`, `userId`, and `lastUpdated` (Unix seconds); the others print `level`. | Off |
+
 ## Behavior
 
 - The setting is saved in `~/.helix/metrics.toml` (or `$HELIX_HOME/metrics.toml`).
-- `full` asks for an email address and repeats the prompt until the address is valid.
+- `full` asks for an email address in a terminal and validates it before saving. Without a terminal, or with `--json`, it reads the address from stdin, one line at a time, until a valid one arrives.
 - Local instances started by the CLI receive the same telemetry level.
 
 ### `helix metrics status` output
 
-`status` prints the metrics level, your user ID (if logged in), and a relative `Last updated` time:
+`status` prints `Level` (`full`, `basic`, or `off`), `User ID` (if set), and a relative `Last updated` time:
 
 | Age | Format |
 | --- | --- |
@@ -7885,18 +7973,18 @@ Cloud only.
 ## Usage
 
 ```bash
-helix project list [--workspace-id <id>] [--format human|json]
-helix project get [<project-id>] [--format human|json]
-helix project create --workspace <id> --slug <slug> --name <name>
-helix project delete [<project-id>] [--yes]
-helix project link <project-id> [--workspace <id>]
+helix project [list] [--workspace <workspace>]
+helix project get [PROJECT] [--workspace <workspace>]
+helix project create <NAME> [--slug <slug>] [--workspace <workspace>] [--link]
+helix project delete [PROJECT] [--workspace <workspace>] [--yes]
+helix project link [PROJECT] [--workspace <workspace>]
 ```
 
 ## Subcommands
 
 | Subcommand | Description |
 | --- | --- |
-| `list` | List projects in a workspace. |
+| `list` | List projects in a workspace. The default when no subcommand is given. |
 | `get` | Show one project. |
 | `create` | Create a project in a workspace. |
 | `delete` | Delete a project. |
@@ -7906,42 +7994,46 @@ helix project link <project-id> [--workspace <id>]
 
 | Argument | Description |
 | --- | --- |
-| `PROJECT_ID` | Project to act on. Required for `link`; `get` and `delete` default to the project linked in `helix.toml`. |
+| `PROJECT` | Project ID, slug, or name. `get` and `delete` default to the project linked in `helix.toml`; `link` prompts when omitted. |
+| `NAME` | `create`: project display name. Required. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--workspace-id <ID>` | `list`: workspace whose projects to list. | Workspace linked in `helix.toml` |
-| `--workspace <ID>` | `create`: owning workspace (required). `link`: fail unless the project belongs to this workspace. | — |
-| `--slug <SLUG>` | `create`: project slug. Required. | — |
-| `--name <NAME>` | `create`: project display name. Required. | — |
-| `-y`, `--yes` | `delete`: skip the confirmation prompt. Required in non-interactive shells. | Off |
-| `--format <FORMAT>` | `list`, `get`, `create`: `human` or `json`. | `human` |
+| `--workspace <WORKSPACE>` | Workspace ID, slug, or name to list, search, or create in. | Linked workspace, then the only workspace |
+| `--slug <SLUG>` | `create`: URL-safe project slug. | Derived from `NAME` |
+| `--link` | `create`: also link this directory's `helix.toml` to the new project. | Off |
+| `-y`, `--yes` | `delete`: skip the confirmation prompt. Required without a terminal or with `--json`. | Off |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 ## Behavior
 
-- `link` persists the stable project/workspace IDs only in the current project's `helix.toml`, and sets `[project] name` to the Cloud project's display name.
-- `link` does not create global selection state.
-- `delete` asks for confirmation in a terminal.
+- Arguments and defaults resolve as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution). A project slug or name without `--workspace` is searched for in every workspace you can access.
+- `list` marks the project linked in `helix.toml`.
+- `link` writes `[project] id` and `workspace_id` to the current project's `helix.toml`. It keeps the local `[project] name`, which names local containers, and creates no global selection state. It ignores an existing link, so it can relink a directory.
+- `delete` asks for confirmation in a terminal. Without one, or with `--json`, it fails before any request unless you pass `--yes`. With `--json` it prints `{"deleted":{"kind":"project","id":"..."}}`.
 - `project update` is not supported.
 
 ## Examples
 
 ```bash
-# List projects in a workspace
-helix project list --workspace-id <id>
+# List projects in the linked or only workspace
+helix project
 
-# Create a project and print it as JSON
-helix project create --workspace <id> --slug demo --name "Demo" --format json
+# Create a project and link this directory to it
+helix project create "Demo App" --link
 
-# Link this directory's helix.toml to an existing project
-helix project link <project-id>
+# Link this directory's helix.toml to an existing project by slug
+helix project link demo-app
+
+# Delete a project without a prompt
+helix project delete demo-app --yes
 ```
 
 ## Related
 
-- [`helix workspace`](/cli/command-reference/workspace) — find workspace IDs.
+- [`helix workspace`](/cli/command-reference/workspace) — list your workspaces.
 - [`helix database`](/cli/command-reference/database) — manage the project's databases.
 - [CLI configuration](/cli/configuration) — how the link is stored in `helix.toml`.
 
@@ -7985,13 +8077,13 @@ It never runs a broad `docker system prune` or `podman system prune`, and it nev
 object-store data.
 
 - `helix prune <instance>` removes resources without confirmation, including persisted disk-mode data.
-- `helix prune --all` prints a warning and asks for confirmation in a TTY. In non-TTY environments, it refuses to run without `--yes`:
+- `helix prune --all` prints a warning and asks for confirmation in a TTY. Without a TTY, or with `--json`, it refuses to run without `--yes`:
 
   ```text
-  Refusing to prune all instances non-interactively. Re-run with --yes to confirm.
+  refusing to prune every local instance without confirmation
   ```
 
-- If nothing was found to prune for an instance, the CLI prints `No local runtime resources found for '<instance>'` and exits successfully.
+- If nothing was found to prune for an instance, the CLI prints `No local runtime resources found for <instance>` and exits successfully.
 
 ## Examples
 
@@ -8027,10 +8119,10 @@ response. Local and Cloud.
 ## Usage
 
 ```bash
-helix query [INSTANCE] --file <request.json> [--compact]
-helix query [INSTANCE] --json '<v3-json>' [--compact]
-helix query [INSTANCE] -e '<typescript-expression>' [--compact]
-helix query [INSTANCE] --ts-file <query.ts> [--compact]
+helix query [INSTANCE] --file <request.json>
+helix query [INSTANCE] --body '<v3-json>'
+helix query [INSTANCE] -e '<typescript-expression>'
+helix query [INSTANCE] --ts-file <query.ts>
 ```
 
 Exactly one input is required. The envelope must include lowercase `request_type` (`read` or `write`)
@@ -8040,7 +8132,7 @@ and `query`. Query bundles are not supported.
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Instance name from `helix.toml`, or an explicit `tenant:<id>` / `cluster:<id>` Cloud database. Defaults to `dev` or the sole linked instance. |
+| `INSTANCE` | Instance name from `helix.toml`, or an explicit `tenant:<id>` / `cluster:<id>` Cloud database. See [Target resolution](#target-resolution) for the default. |
 
 ## Options
 
@@ -8049,7 +8141,7 @@ and `query`. Query bundles are not supported.
 | Flag | Description | Default |
 | --- | --- | --- |
 | `-f`, `--file <REQUEST.json>` | Read the request from a JSON file. | — |
-| `--json <JSON>` | Read the request from an inline JSON string. | — |
+| `--body <JSON>` | Read the request from an inline JSON string. | — |
 | `-e`, `--ts <TS>` | Build the request from a TypeScript DSL expression, like `mysql -e`. | — |
 | `--ts-file <QUERY.ts>` | Build the request from a TypeScript DSL file. | — |
 
@@ -8059,20 +8151,21 @@ and `query`. Query bundles are not supported.
 | --- | --- | --- |
 | `--host <HOST>` | Override the host. | `localhost` |
 | `--port <PORT>` | Override the port. | The instance's port in `helix.toml` |
+| `--warm` | `read` requests only: pre-warm caches with the `X-Helix-Warm` header. | Off |
 
 ### Output
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--warm` | Local `read` requests only: pre-warm caches with the `X-Helix-Warm` header. | Off |
-| `--compact` | Print compact single-line JSON. | Off (pretty-printed) |
+| `--json` | Print the response as compact JSON only, with no footer. | Off (highlighted, pretty-printed) |
 
 ## Behavior
 
 ### Target resolution
 
-- With no target, the CLI uses the `dev` instance (local or Cloud) or the sole linked instance.
-- Ambiguous projects must specify an instance or an explicit `tenant:<id>` / `cluster:<id>`.
+- A typed `tenant:<id>` / `cluster:<id>` target works without a `helix.toml`.
+- With no target, the CLI uses the `dev` instance (local or Cloud), then the only instance, then a picker in a terminal.
+- Otherwise it fails and lists the instances you can pass.
 
 ### Local queries
 
@@ -8100,7 +8193,8 @@ endpoint that applications reach with an application key) directly.
 
 ### Output
 
-- The response is pretty-printed JSON unless you pass `--compact`.
+- The response goes to stdout as syntax-highlighted, pretty-printed JSON. A dim footer with the HTTP status, latency, and target (for example `200 OK · 12ms · dev`) goes to stderr, so stdout stays pipeable.
+- `--json` prints only the compact JSON response. `--quiet` still prints the response but drops the footer.
 - An empty response prints nothing. A non-2xx response fails with the HTTP status and body.
 
 ## Examples
@@ -8110,13 +8204,13 @@ endpoint that applications reach with an application key) directly.
 helix query --file examples/request.json
 
 # Target a named local instance and print one line of JSON
-helix query dev --file examples/request.json --compact
+helix query dev --file examples/request.json --json
 
 # Build the request from a TypeScript DSL expression
 helix query -e 'readBatch().varAs("c", g().nWithLabel("User").count()).returning(["c"])'
 
-# Query an explicit Cloud database
-helix query tenant:<id> --file examples/request.json
+# Query an explicit Cloud database, no helix.toml needed
+helix query tenant:<id> --file request.json
 ```
 
 ## Related
@@ -8144,7 +8238,13 @@ helix restart [INSTANCE]
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Local instance to restart. If omitted in a TTY with multiple instances, the CLI prompts. Defaults to `dev` when present, otherwise the only local instance. |
+| `INSTANCE` | Local instance to restart. Defaults to `dev`, then the only local instance, then a picker in a terminal; otherwise the command fails and lists the local instances. |
+
+## Options
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--json` | Print `instance` as JSON on stdout, and never prompt. | Off |
 
 ## Behavior
 
@@ -8160,7 +8260,7 @@ helix restart [INSTANCE]
 # Restart the default 'dev' instance
 helix restart dev
 
-# Restart with interactive picker
+# Restart 'dev' or the only local instance, or pick one
 helix restart
 ```
 
@@ -8259,7 +8359,7 @@ helix start [INSTANCE] [OPTIONS]
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Local instance name from `helix.toml`. If omitted in a TTY with multiple local instances, the CLI prompts. Otherwise defaults to `dev` when present, or the only local instance. |
+| `INSTANCE` | Local instance name from `helix.toml`. Defaults to `dev`, then the only local instance, then a picker in a terminal; otherwise the command fails and lists the local instances. |
 
 ## Options
 
@@ -8275,6 +8375,7 @@ helix start [INSTANCE] [OPTIONS]
 | `--image-version <VERSION>` | Override the image tag, or `sha256:<64 lowercase hex digits>`, for this run. | Configured tag |
 | `--pull <POLICY>` | `always`, `missing`, or `never`. Explicit policies also apply to the disk-mode SeaweedFS image. | Configured policy, otherwise `always` for `latest` and `missing` for other versions |
 | `--persist` | Write the resolved port, storage, image, and pull settings for this run back to `[local.<instance>]` in `helix.toml`, so future runs reuse them. | Off |
+| `--json` | Print `instance`, `url`, and `container` as JSON on stdout once ready, and never prompt. | Off |
 
 ## Behavior
 
@@ -8287,7 +8388,7 @@ helix start [INSTANCE] [OPTIONS]
 - Default storage is in-memory. Passing `--disk` starts a SeaweedFS S3 sidecar (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest) that creates the `helix-db` bucket, waits up to 60 seconds for the bucket to accept signed requests, and runs `helixdb` with S3-compatible storage environment variables.
 - `--s3-region`, `--s3-endpoint-url`, and `--s3-allow-http` require `--storage-uri`, unless the instance already uses S3 storage; then they override its saved S3 settings for this run.
 - The CLI loads `.env` from the project root before starting. For S3 storage, it passes any `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_REGION`, and `AWS_DEFAULT_REGION` values from the environment into the container.
-- Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready.
+- Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready. Progress goes to stderr.
 - Foreground mode (`--rm`) streams the container's stdout/stderr until Ctrl-C, then removes the container.
 
 The default `helixdb` storage mode is in-memory. Stopping or restarting an in-memory instance wipes all local data. The CLI shows this warning the first time you start each in-memory instance.
@@ -8356,13 +8457,21 @@ helix status [INSTANCE]
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Instance to show. If omitted, the CLI prompts in a TTY when there are several instances (with an "All instances" option); otherwise it shows all instances. |
+| `INSTANCE` | Instance to show. If omitted, every instance is shown. The command never prompts. |
+
+## Options
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--json` | Print the report as JSON on stdout. | Off |
 
 ## Behavior
 
-- Prints the project name and root directory, then one line per instance.
+- Prints a `Project` / `Root` header, then a table with `INSTANCE`, `KIND`, `STATUS`, and `ENDPOINT` columns.
 - Local status comes from the configured Docker/Podman runtime: URL, container state (`not created` if there is no container), and storage mode.
 - Cloud status uses the WorkOS session and fetches the linked tenant or dedicated cluster; cluster status also includes current topology.
+- A Cloud database that cannot be reached shows as `unreachable` (or `unknown` when you are not logged in) with a warning on stderr. The command still reports every other instance.
+- `--json` prints an object with `project`, `root`, and an `instances` array. Local entries have `kind: "local"`, `name`, `state`, `url`, and `storage`. Cloud entries have `kind: "cloud"`, `name`, `state`, `database`, and, when present, `label` and `error`.
 
 ## Examples
 
@@ -8372,6 +8481,9 @@ helix status
 
 # Show one instance
 helix status dev
+
+# Machine-readable status
+helix status --json
 ```
 
 ## Related
@@ -8398,7 +8510,13 @@ helix stop [INSTANCE]
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Local instance to stop. If omitted in a TTY with multiple instances, the CLI prompts. Defaults to `dev` when present, otherwise the only local instance. |
+| `INSTANCE` | Local instance to stop. Defaults to `dev`, then the only local instance, then a picker in a terminal; otherwise the command fails and lists the local instances. |
+
+## Options
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--json` | Print `instance` and `wasRunning` as JSON on stdout, and never prompt. | Off |
 
 ## Behavior
 
@@ -8413,7 +8531,7 @@ helix stop [INSTANCE]
 # Stop the default 'dev' instance
 helix stop dev
 
-# Stop with interactive picker
+# Stop 'dev' or the only local instance, or pick one
 helix stop
 
 # Safe to call in scripts even if the instance is already stopped
@@ -8440,22 +8558,24 @@ Owners and admins need the workspace-scoped `service_credentials.manage` permiss
 ## Usage
 
 ```bash
-helix service-credential create --workspace <id> --name <name> \
+helix service-credential create --name <name> \
   --grant <project-id>=project-read,query-read [--expires-at <RFC3339>]
-helix service-credential list --workspace <id>
-helix service-credential get --workspace <id> <credential-id>
-helix service-credential update --workspace <id> <credential-id> \
+helix service-credential [list]
+helix service-credential get <CREDENTIAL>
+helix service-credential update <CREDENTIAL> \
   [--name <name>] [--grant <project-id>=query-read,query-write] \
   [--expires-at <RFC3339> | --clear-expiry]
-helix service-credential revoke --workspace <id> <credential-id> [--yes]
+helix service-credential revoke <CREDENTIAL> [--yes]
 ```
+
+Every subcommand also accepts `--workspace`.
 
 ## Subcommands
 
 | Subcommand | Description |
 | --- | --- |
 | `create` | Create a credential and print its secret once. |
-| `list` | List credentials owned by a workspace. |
+| `list` | List credentials owned by a workspace. The default when no subcommand is given. |
 | `get` | Show one credential. Its secret is never returned. |
 | `update` | Change the name, expiry, or project grants without rotating the secret. |
 | `revoke` | Revoke a credential. |
@@ -8464,27 +8584,29 @@ helix service-credential revoke --workspace <id> <credential-id> [--yes]
 
 | Argument | Description |
 | --- | --- |
-| `CREDENTIAL_ID` | Credential to act on with `get`, `update`, or `revoke`. Required. |
+| `CREDENTIAL` | Credential ID or name to act on with `get`, `update`, or `revoke`. Required. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--workspace <ID>` | Owning workspace. Required for every subcommand. | — |
-| `--name <NAME>` | Credential name. Required for `create`. | — |
+| `--workspace <WORKSPACE>` | Owning workspace ID, slug, or name. | Linked workspace, then the only workspace |
+| `--name <NAME>` | Credential name. Required for `create`; renames on `update`. | — |
 | `--grant <PROJECT_ID>=<PERMISSIONS>` | Project grant, repeatable. `create` needs at least one; on `update`, any `--grant` replaces all existing grants. | — |
 | `--expires-at <RFC3339>` | Expiry time for `create` or `update`. | No expiry |
 | `--clear-expiry` | `update`: remove the expiry. Conflicts with `--expires-at`. | Off |
-| `-y`, `--yes` | `revoke`: skip the confirmation prompt. Required in non-interactive shells. | Off |
-| `--format <FORMAT>` | `list`, `get`: `human` or `json`. | `human` |
+| `-y`, `--yes` | `revoke`: skip the confirmation prompt. Required without a terminal or with `--json`. | Off |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 ## Behavior
 
-- Each grant is project-scoped and must name a project inside the owning workspace.
+- The workspace resolves as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
+- Each grant is project-scoped and must name a project ID inside the owning workspace.
 - Available grants are `project-read`, `project-write`, `query-read`, and `query-write`, comma-separated; write requires its matching read.
 - Each project may appear in only one `--grant`, and a grant cannot repeat a permission.
-- Creation displays the secret once. Updates never reveal or rotate it.
+- Creation prints the secret once on stdout. With `--json`, the full create response, including the secret, is printed instead. Updates never reveal or rotate it.
 - `update` needs at least one of `--name`, `--grant`, `--expires-at`, or `--clear-expiry`.
+- `revoke` asks for confirmation in a terminal. Without one, or with `--json`, it fails before any request unless you pass `--yes`.
 - Service credentials authenticate headless HTTP API calls and the unified MCP endpoint at `https://mcp.helix-db.com/mcp`.
 - MCP exposes only the query and customer administration tools their project grants allow. These sessions do not get Cloud discovery or observability tools.
 - They are never a CLI login method and the CLI never persists them.
@@ -8493,21 +8615,21 @@ helix service-credential revoke --workspace <id> <credential-id> [--yes]
 
 ```bash
 # Create a read-only credential for one project, expiring at the end of the year
-helix service-credential create --workspace <id> --name ci-reader \
+helix service-credential create --name ci-reader \
   --grant <project-id>=project-read,query-read --expires-at 2026-12-31T23:59:59Z
 
 # Allow the credential to write queries too (replaces all grants)
-helix service-credential update --workspace <id> <credential-id> \
+helix service-credential update ci-reader \
   --grant <project-id>=project-read,query-read,query-write
 
 # Revoke it without a prompt
-helix service-credential revoke --workspace <id> <credential-id> --yes
+helix service-credential revoke ci-reader --yes
 ```
 
 ## Related
 
 - [`helix auth`](/cli/command-reference/auth) — the WorkOS login used to manage credentials.
-- [`helix workspace`](/cli/command-reference/workspace) — find workspace IDs.
+- [`helix workspace`](/cli/command-reference/workspace) — list your workspaces.
 - [`helix project`](/cli/command-reference/project) — find the project IDs to grant.
 
 # helix shell
@@ -8522,27 +8644,28 @@ Helix Cloud database. Local and Cloud.
 ## Usage
 
 ```bash
-helix shell [INSTANCE] [--compact]
+helix shell [INSTANCE]
 ```
 
 ## Arguments
 
 | Argument | Description |
 | --- | --- |
-| `INSTANCE` | Instance name from `helix.toml`, or an explicit `tenant:<id>` / `cluster:<id>` reference. Defaults to `dev` or the sole linked instance. |
+| `INSTANCE` | Instance name from `helix.toml`, or an explicit `tenant:<id>` / `cluster:<id>` reference. Defaults like [`helix query`](/cli/command-reference/query#target-resolution): `dev`, then the only instance, then a picker in a terminal. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--compact` | Print compact single-line JSON responses. | Off (pretty-printed) |
+| `--json` | Print each response as compact single-line JSON, with no footer. | Off (highlighted, pretty-printed) |
 
 ## Behavior
 
 - Enter one complete v3 query request per line at the `helix>` prompt. The request's `request_type` selects read or write execution.
 - Use `:quit` or `:exit` (or `quit`, `exit`, or end of input) to stop.
 - Blank lines are ignored. Invalid JSON and query errors are printed, and the shell keeps running.
-- With no target, the CLI uses the `dev` instance (local or Cloud) or the sole linked instance; ambiguous projects must specify an instance or an explicit `tenant:<id>` / `cluster:<id>` reference.
+- Responses go to stdout exactly as with `helix query`; the prompt, status footer, and errors go to stderr.
+- A typed `tenant:<id>` / `cluster:<id>` target works without a `helix.toml`.
 - Local instances use the existing auth-disabled local endpoint.
 - Cloud requests use the backend query broker (the Helix Cloud service that forwards CLI queries) and the current WorkOS session; the CLI never contacts the Cloud gateway (the database endpoint that applications use) directly.
 
@@ -8552,8 +8675,8 @@ helix shell [INSTANCE] [--compact]
 # Open a shell against the local 'dev' instance
 helix shell dev
 
-# Run newline-delimited requests from a file
-helix shell dev --compact < requests.jsonl
+# Run newline-delimited requests from a file, one JSON response per line
+helix shell dev --json < requests.jsonl
 ```
 
 ## Related
@@ -8621,43 +8744,43 @@ read-only.
 ## Usage
 
 ```bash
-helix workspace list [--format human|json]
-helix workspace get <workspace-id> [--format human|json]
+helix workspace [list]
+helix workspace get [WORKSPACE]
 ```
 
 ## Subcommands
 
 | Subcommand | Description |
 | --- | --- |
-| `list` | List every workspace you are a member of. |
-| `get` | Show one workspace by ID. |
+| `list` | List every workspace you are a member of. The default when no subcommand is given. |
+| `get` | Show one workspace. |
 
 ## Arguments
 
 | Argument | Description |
 | --- | --- |
-| `WORKSPACE_ID` | Workspace to show with `get`. Required. |
+| `WORKSPACE` | `get`: workspace ID, slug, or name. Defaults to the linked workspace, then the only workspace. |
 
 ## Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--format <FORMAT>` | Output format: `human` or `json`. | `human` |
+| `--json` | Print the result as JSON on stdout and never prompt. | Off |
 
 ## Behavior
 
-- The WorkOS session hydrates all current memberships.
+- The WorkOS session hydrates all current memberships. `list` marks the workspace linked in `helix.toml`.
 - There is no `workspace switch` command and no persisted active workspace.
-- Pass `--workspace` or `--workspace-id` to a command that cannot derive an unambiguous workspace from its linked project/database.
+- Commands that need a workspace take `--workspace <id|slug|name>`, or resolve one as described in [Cloud resource resolution](/cli/command-reference#cloud-resource-resolution).
 
 ## Examples
 
 ```bash
 # List your workspaces
-helix workspace list
+helix workspace
 
 # Show one workspace as JSON
-helix workspace get <workspace-id> --format json
+helix workspace get <workspace> --json
 ```
 
 ## Related
