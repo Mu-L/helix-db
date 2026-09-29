@@ -3523,7 +3523,9 @@ request = query.to_query_request(
 - generic property `value`
 - typed objects and arrays
 
-JSON cannot represent a bytes parameter directly; use an SDK's byte request encoder.
+Query JSON cannot represent bytes, and no SDK provides a byte request encoder. Every SDK rejects a
+bytes parameter with an `UnsupportedBytesParameter` error when it serializes the request, so bytes
+parameters cannot currently be sent to `POST /v2/query`.
 
 In Go, `ParamDateTime` and typed `date_time` parameters accept `helix.DateTime`, `time.Time`, an
 RFC3339 string, or an `int`/`int64` epoch-millisecond value. The SDK normalizes each value to UTC
@@ -4748,10 +4750,11 @@ cluster-mode gateway URLs require the API key but reject both database and
 tenant selection headers. Use the endpoint mode shown in the dashboard; do not
 copy headers between the two modes.
 
-The current public SDK request builders set bearer authentication and execution
-headers but do not expose the GA database-selection header. Use them with a
-database-specific cluster gateway URL, or use direct HTTP for a GA shared
-gateway.
+The TypeScript SDK (`@helix-db/helix-db` 3.2.0 and later) sends
+`X-Helix-Database-Id` after `client.withDatabaseId("<database-id>")`. The
+published Python, Rust, and Go SDKs do not expose the GA database-selection
+header; use them with a database-specific cluster gateway URL, or use direct
+HTTP for a GA shared gateway.
 
 Create or rotate the cluster key in the Helix Cloud dashboard. Do not put keys
 in source control, agent instructions, `llms.txt`, or catalog manifests.
@@ -5386,9 +5389,10 @@ client = Client(
 These SDK examples target a database-specific cluster-mode gateway URL. Such an
 endpoint authenticates the API key but rejects `X-Helix-Database-Id` and
 `X-Helix-Tenant-Id`. A GA shared gateway instead requires
-`X-Helix-Database-Id`; the current public SDK request builders do not expose
-that selection header, so use the direct HTTP contract for GA shared-gateway
-requests.
+`X-Helix-Database-Id`. The TypeScript SDK (`@helix-db/helix-db` 3.2.0 and
+later) sends it after `client.withDatabaseId("<database-id>")`. The published
+Python, Rust, and Go SDKs do not expose that selection header, so use the
+direct HTTP contract for GA shared-gateway requests from those languages.
 
 Each client sends the same operation-tree request body:
 
@@ -6051,8 +6055,9 @@ temporarily lag.
 
 Use a writer-only server request when a separate request requires read-after-write:
 
-Set `writerOnly()` / `writer_only(true)` / the equivalent Go request option before
-sending the read.
+Call `writerOnly()` on the TypeScript request builder, `writer_only()` on the Python
+`QueryBuilder` (or pass `writer_only=True` to `Client.execute`), or pass
+`helix.WriterOnly()` to Go `Client.Exec` before sending the read.
 
 Embedded writer handles execute against their local writer. Embedded reader handles
 are read-only and refresh according to the underlying reader lifecycle.
