@@ -77,12 +77,14 @@ pub(in crate::rules) fn stream_pipeline_op_contract(
                 storage.index_membership_filter(
                     plan.predicate().as_ref(),
                     set.secondary_id_cost().unwrap_or(set.cost),
-                    membership_label_domain_cost(
-                        plan.outside_label(),
-                        plan.label(),
-                        stats,
-                        storage,
-                    ),
+                    match plan.set() {
+                        ir::NodeMembershipSet::Index {
+                            label,
+                            outside_label,
+                            ..
+                        } => membership_label_domain_cost(*outside_label, label, stats, storage),
+                        ir::NodeMembershipSet::Labels(_) => None,
+                    },
                     cost::MembershipStream::new(rows, upper),
                 ),
             )
@@ -253,13 +255,31 @@ pub(in crate::rules) fn stream_pipeline_op_contract(
 }
 
 /// Access contract of a membership set, used for its ID cost and row estimate.
+///
+/// A `$label` set is priced as the label scans of its labels.
 pub(in crate::rules) fn membership_set_contract(
     plan: &ir::NodeIndexMembershipPlan,
     storage: &cost::StorageCostProfile,
     stats: &context::StatsSnapshot,
 ) -> super::super::access::AccessPhysicalContract {
+    let set = match plan.set() {
+        ir::NodeMembershipSet::Index { set, .. } => set.clone(),
+        ir::NodeMembershipSet::Labels(labels) => {
+            let scan = |label: &ir::NonEmptyString| {
+                ir::NodeAccessSourcePlan::from_unfiltered(ir::NodeAccessPlan::LabelScan {
+                    label: label.clone(),
+                })
+            };
+            match ir::AtLeast::<_, 2>::try_from_vec(labels.iter().map(scan).collect()) {
+                Some(scans) => {
+                    ir::NodeAccessSourcePlan::from_unfiltered(ir::NodeAccessPlan::Union(scans))
+                }
+                None => scan(&labels[0]),
+            }
+        }
+    };
     super::super::access::access_path_contract(
-        &logical::AccessPath::Node(logical::NodeAccessPath::new(plan.set().clone())),
+        &logical::AccessPath::Node(logical::NodeAccessPath::new(set)),
         storage,
         stats,
     )

@@ -39,12 +39,19 @@ impl ExecutableDagBuilder<'_> {
                     plan.predicate().as_ref(),
                     self.profile
                         .bitmap_equality_lookup(self.profile.default_equality_index_rows),
-                    match plan.outside_label() {
-                        ir::NodeMembershipOutsideLabel::Reject => None,
-                        ir::NodeMembershipOutsideLabel::Evaluate => Some(
+                    match plan.set() {
+                        ir::NodeMembershipSet::Index {
+                            outside_label: ir::NodeMembershipOutsideLabel::Evaluate,
+                            ..
+                        } => Some(
                             self.profile
                                 .bitmap_equality_lookup(self.profile.default_unknown_scan_rows),
                         ),
+                        ir::NodeMembershipSet::Index {
+                            outside_label: ir::NodeMembershipOutsideLabel::Reject,
+                            ..
+                        }
+                        | ir::NodeMembershipSet::Labels(_) => None,
                     },
                     cost::MembershipStream::new(rows, upper),
                 ),

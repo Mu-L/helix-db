@@ -1,51 +1,50 @@
 //! Row-preserving residual filter and node index membership contracts.
 //!
 //! Both operators keep rows in input order with their paths, bindings, and
-//! sacks. Rows that need the predicate are evaluated in bounded batches whose
+//! sacks. Rows that need a predicate are evaluated in bounded batches whose
 //! stored records are read with one multi-get per batch instead of one serial
-//! read per row. Index membership decides nodes of its label from secondary
-//! index bitmaps and evaluates the predicate only for rows the index cannot
-//! decide.
+//! read per row.
 //!
-//! The bitmaps grow with the label and the matching values, not with the
-//! stream, so membership reads them only for streams with more node rows
-//! than one record batch. Narrower streams cost at most one multi-get per
-//! batch and evaluate every row, exactly like the filter they replace. A
-//! resolved set is reused by later executions of the same plan in the
-//! request, such as branch bodies that run once per parent row.
+//! Index membership decides nodes from a set read from indexes and evaluates
+//! a predicate only for rows the set cannot decide, plus the residual
+//! conjuncts of nodes in the set. There is no row-count threshold: the first
+//! node row that needs a decision resolves the set, once per request state,
+//! and a resolved set is reused by later executions of the same plan in the
+//! request, such as branch bodies that run once per parent row. Streams
+//! without node rows never resolve it.
 
 use std::sync::Arc;
+
+use futures::FutureExt;
 
 use super::eval::RowValueResolver;
 use super::*;
 
 /// Rows evaluated per stored-record batch. This bounds the decoded records a
 /// filter holds at once while amortizing one multi-get over many rows, and
-/// sizes the multi-get batches of every row-preserving filter. Index
-/// membership also resolves its bitmaps only for streams with more node rows.
+/// sizes the multi-get batches of every row-preserving filter.
 ///
-/// The planner prices index membership by this same threshold, so the value
-/// comes from `helix_planner::cost::RECORD_BATCH_ROWS`; changing it changes
-/// pricing and execution together.
+/// The value comes from `helix_planner::cost::RECORD_BATCH_ROWS`, so pricing
+/// and execution batch alike.
 pub(super) const RECORD_BATCH_ROWS: usize = helix_planner::cost::RECORD_BATCH_ROWS as usize;
 
 /// Decision for one row of a row-preserving filter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::execution::interpreter) enum RowDecision {
-    /// Keep the row without evaluating the predicate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::execution::interpreter) enum RowDecision<'p> {
+    /// Keep the row without evaluating a predicate.
     Keep,
-    /// Drop the row without evaluating the predicate.
+    /// Drop the row without evaluating a predicate.
     Drop,
-    /// Evaluate the predicate against the row.
-    Evaluate,
+    /// Keep the row exactly when it satisfies this predicate.
+    Evaluate(&'p Predicate),
 }
 
 /// Membership state resolved once per operator execution.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::execution::interpreter) enum PreparedIndexMembership {
-    /// Secondary indexes decide every node of the membership label.
+    /// Indexes decide every node of the membership set.
     Indexed {
-        /// Label nodes satisfying the membership predicate.
+        /// Nodes satisfying the decided conjuncts.
         matches: roaring::RoaringTreemap,
         /// Decision for nodes outside `matches`.
         outside: OutsideMatches,
@@ -97,7 +96,8 @@ impl PreparedMemberships {
 /// Decision for nodes outside the membership set.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::execution::interpreter) enum OutsideMatches {
-    /// The predicate requires the membership label, so every other node fails.
+    /// Every other node fails the predicate: it requires the set label, or
+    /// the set holds every node of the labels the predicate admits.
     Reject,
     /// Label nodes fail; nodes of other labels evaluate the predicate.
     Evaluate {
@@ -107,70 +107,73 @@ pub(in crate::execution::interpreter) enum OutsideMatches {
 }
 
 impl PreparedIndexMembership {
-    /// Decide one row. Edge and element-free rows always evaluate.
-    pub(in crate::execution::interpreter) fn decide(&self, row: &ExecutionRow) -> RowDecision {
+    /// Decide one row of `plan`, the plan this membership was resolved from.
+    ///
+    /// Nodes in the set evaluate the residual, if any. Edge and element-free
+    /// rows, and every row of a per-row membership, evaluate the whole
+    /// predicate.
+    pub(in crate::execution::interpreter) fn decide<'p>(
+        &self,
+        plan: &'p exec::ExecNodeIndexMembershipPlan,
+        row: &ExecutionRow,
+    ) -> RowDecision<'p> {
         let (Self::Indexed { matches, outside }, Some(ElementRef::Node(id))) =
             (self, row.current.as_ref())
         else {
-            return RowDecision::Evaluate;
+            return RowDecision::Evaluate(plan.predicate.predicate());
         };
         if matches.contains(*id) {
-            return RowDecision::Keep;
+            return plan
+                .residual
+                .as_ref()
+                .map_or(RowDecision::Keep, |residual| {
+                    RowDecision::Evaluate(residual.predicate())
+                });
         }
         match outside {
             OutsideMatches::Reject => RowDecision::Drop,
             OutsideMatches::Evaluate { label_nodes } if label_nodes.contains(*id) => {
                 RowDecision::Drop
             }
-            OutsideMatches::Evaluate { .. } => RowDecision::Evaluate,
+            OutsideMatches::Evaluate { .. } => RowDecision::Evaluate(plan.predicate.predicate()),
         }
     }
 }
 
 /// Index membership state of one pull cursor.
 ///
-/// A cursor cannot see how many rows it will pull, so it evaluates its first
-/// record batch of node rows one by one and resolves the set on the next node
-/// row. A short pull, such as an existence check or a small limit, therefore
-/// never reads the label-sized bitmaps.
-#[derive(Debug)]
+/// The cursor resolves the set, cache first, on the first node row it
+/// decides, so short pulls such as an existence check or a small limit
+/// resolve it on their first node row. Edge and element-free rows evaluate
+/// the predicate and never resolve it.
+#[derive(Debug, Default)]
 pub(in crate::execution::interpreter) enum MembershipCursor {
-    /// Node rows evaluated so far, at most [`RECORD_BATCH_ROWS`].
-    PerRow { node_rows: usize },
-    /// Set resolved after the cursor pulled more than one batch of node rows.
-    Prepared(Arc<PreparedIndexMembership>),
-}
-
-impl Default for MembershipCursor {
-    fn default() -> Self {
-        Self::PerRow { node_rows: 0 }
-    }
+    /// No node row has been decided yet.
+    #[default]
+    Unresolved,
+    /// Set resolved on the cursor's first node row.
+    Resolved(Arc<PreparedIndexMembership>),
 }
 
 impl MembershipCursor {
-    /// Decide one pulled row, resolving the set once the cursor has pulled
-    /// more node rows than one record batch.
-    pub(in crate::execution::interpreter) async fn decide(
+    /// Decide one pulled row, resolving the set on the first node row.
+    pub(in crate::execution::interpreter) async fn decide<'p>(
         &mut self,
         ctx: &mut ExecutionContext<'_>,
-        plan: &exec::ExecNodeIndexMembershipPlan,
+        plan: &'p exec::ExecNodeIndexMembershipPlan,
         row: &ExecutionRow,
-    ) -> Result<RowDecision> {
-        match (&mut *self, row.current.as_ref()) {
-            (Self::Prepared(prepared), _) => Ok(prepared.decide(row)),
-            (Self::PerRow { node_rows }, Some(ElementRef::Node(_)))
-                if *node_rows < RECORD_BATCH_ROWS =>
-            {
-                *node_rows += 1;
-                Ok(RowDecision::Evaluate)
-            }
-            (Self::PerRow { .. }, Some(ElementRef::Node(_))) => {
+    ) -> Result<RowDecision<'p>> {
+        match (&*self, row.current.as_ref()) {
+            (Self::Resolved(prepared), _) => Ok(prepared.decide(plan, row)),
+            (Self::Unresolved, Some(ElementRef::Node(_))) => {
                 let prepared = ctx.cached_index_membership(plan).await?;
-                let decision = prepared.decide(row);
-                *self = Self::Prepared(prepared);
+                let decision = prepared.decide(plan, row);
+                *self = Self::Resolved(prepared);
                 Ok(decision)
             }
-            (Self::PerRow { .. }, Some(ElementRef::Edge(_)) | None) => Ok(RowDecision::Evaluate),
+            (Self::Unresolved, Some(ElementRef::Edge(_)) | None) => {
+                Ok(RowDecision::Evaluate(plan.predicate.predicate()))
+            }
         }
     }
 }
@@ -182,7 +185,7 @@ impl<'db> ExecutionContext<'db> {
         predicate: &ir::PredicatePlan,
     ) -> Result<ExecutionValue> {
         let rows = self.stream_rows(input, "filter")?;
-        self.retain_rows(rows, predicate.predicate(), |_| RowDecision::Evaluate)
+        self.retain_rows(rows, |_| RowDecision::Evaluate(predicate.predicate()))
             .await
             .map(ExecutionValue::Stream)
     }
@@ -193,18 +196,15 @@ impl<'db> ExecutionContext<'db> {
         plan: &exec::ExecNodeIndexMembershipPlan,
     ) -> Result<ExecutionValue> {
         let rows = self.stream_rows(input, "index membership")?;
-        // At most one record batch of node rows evaluates every row, which
-        // never reads more than the label-sized bitmaps would.
-        let node_rows = rows
+        let prepared = if rows
             .iter()
-            .filter(|row| matches!(row.current, Some(ElementRef::Node(_))))
-            .count();
-        let prepared = if node_rows > RECORD_BATCH_ROWS {
+            .any(|row| matches!(row.current, Some(ElementRef::Node(_))))
+        {
             self.cached_index_membership(plan).await?
         } else {
             Arc::new(PreparedIndexMembership::PerRow)
         };
-        self.retain_rows(rows, plan.predicate.predicate(), |row| prepared.decide(row))
+        self.retain_rows(rows, |row| prepared.decide(plan, row))
             .await
             .map(ExecutionValue::Stream)
     }
@@ -238,43 +238,75 @@ impl<'db> ExecutionContext<'db> {
         }
     }
 
-    /// Resolve the membership set and label domain for this request.
+    /// Resolve the membership set, and the label domain it needs, for this
+    /// request.
     ///
-    /// Both reads go through the request snapshot or write transaction and
-    /// its Active catalog. A set that needs an authoritative scan, or an index
-    /// the catalog no longer serves, falls back to exact per-row evaluation.
+    /// Every read goes through the request snapshot or write transaction and
+    /// its Active catalog. An index set that needs an authoritative scan, or
+    /// an index the catalog no longer serves, falls back to exact per-row
+    /// evaluation.
     ///
-    /// The set keeps at most `PARALLEL_INDEX_READS` leaf index reads in
+    /// An index set keeps at most `PARALLEL_INDEX_READS` leaf index reads in
     /// flight, and the label domain of an `Evaluate` policy is read alongside
     /// it, so one resolve keeps at most `PARALLEL_INDEX_READS + 1` reads in
-    /// flight.
+    /// flight. A `$label` set reads at most `PARALLEL_INDEX_READS` label
+    /// bitmaps at once and rejects every other node.
     async fn prepare_index_membership(
         &self,
         plan: &exec::ExecNodeIndexMembershipPlan,
     ) -> Result<PreparedIndexMembership> {
-        if !self.node_secondary_set_is_index_served(&plan.set)? {
-            return Ok(PreparedIndexMembership::PerRow);
-        }
-        let outside = async {
-            match plan.outside_label {
-                ir::NodeMembershipOutsideLabel::Reject => Ok(OutsideMatches::Reject),
-                ir::NodeMembershipOutsideLabel::Evaluate => self
-                    .lookup_equality_index_set(
-                        "$label",
-                        &DbPropertyValue::String(plan.label.to_string()),
-                    )
-                    .await
-                    .map(|label_nodes| OutsideMatches::Evaluate { label_nodes }),
+        let prepared = match &plan.set {
+            exec::ExecNodeMembershipSet::Index {
+                set,
+                label,
+                outside_label,
+            } => {
+                if !self.node_secondary_set_is_index_served(set)? {
+                    return Ok(PreparedIndexMembership::PerRow);
+                }
+                let outside = async {
+                    match outside_label {
+                        ir::NodeMembershipOutsideLabel::Reject => Ok(OutsideMatches::Reject),
+                        ir::NodeMembershipOutsideLabel::Evaluate => self
+                            .lookup_equality_index_set(
+                                "$label",
+                                &DbPropertyValue::String(label.to_string()),
+                            )
+                            .await
+                            .map(|label_nodes| OutsideMatches::Evaluate { label_nodes }),
+                    }
+                };
+                futures::try_join!(self.node_secondary_set_bitmap(set), outside)
+                    .map(|(matches, outside)| PreparedIndexMembership::Indexed { matches, outside })
             }
+            exec::ExecNodeMembershipSet::Labels(labels) => access::union(self.read_children(
+                labels.iter().collect(),
+                access::PARALLEL_INDEX_READS,
+                |label, _| {
+                    async move {
+                        self.lookup_equality_index_set(
+                            "$label",
+                            &DbPropertyValue::String(label.to_string()),
+                        )
+                        .await
+                    }
+                    .boxed()
+                },
+            ))
+            .await
+            .map(|matches| PreparedIndexMembership::Indexed {
+                matches,
+                outside: OutsideMatches::Reject,
+            }),
         };
-        match futures::try_join!(self.node_secondary_set_bitmap(&plan.set), outside) {
-            Ok((matches, outside)) => {
+        match prepared {
+            Ok(prepared) => {
                 #[cfg(test)]
                 self.db
                     .inner
                     .resolved_index_memberships
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                Ok(PreparedIndexMembership::Indexed { matches, outside })
+                Ok(prepared)
             }
             Err(HelixDbError::IndexLifecycleUnavailable { .. }) => {
                 Ok(PreparedIndexMembership::PerRow)
@@ -283,14 +315,15 @@ impl<'db> ExecutionContext<'db> {
         }
     }
 
-    /// Keep rows in order, evaluating `predicate` only where `decide` asks.
-    async fn retain_rows(
+    /// Keep rows in order, evaluating a predicate only where `decide` asks.
+    ///
+    /// Each batch prefetches the records of rows whose predicate always reads
+    /// them, so a batch reads each record at most once.
+    async fn retain_rows<'p>(
         &self,
         rows: Vec<ExecutionRow>,
-        predicate: &Predicate,
-        decide: impl Fn(&ExecutionRow) -> RowDecision,
+        decide: impl Fn(&ExecutionRow) -> RowDecision<'p>,
     ) -> Result<Vec<ExecutionRow>> {
-        let prefetch = always_reads_element_record(predicate);
         let mut kept = Vec::new();
         let mut rows = rows.into_iter().map(|row| (decide(&row), row));
         loop {
@@ -299,22 +332,23 @@ impl<'db> ExecutionContext<'db> {
                 return Ok(kept);
             }
             let mut resolver = RowValueResolver::new(self);
-            if prefetch {
-                resolver
-                    .prefetch(
-                        batch
-                            .iter()
-                            .filter(|(decision, _)| *decision == RowDecision::Evaluate)
-                            .filter_map(|(_, row)| row.current.as_ref()),
-                    )
-                    .await?;
-            }
+            resolver
+                .prefetch(
+                    batch
+                        .iter()
+                        .filter(|(decision, _)| {
+                            matches!(decision, RowDecision::Evaluate(predicate)
+                                if always_reads_element_record(predicate))
+                        })
+                        .filter_map(|(_, row)| row.current.as_ref()),
+                )
+                .await?;
             for (decision, row) in batch {
                 self.check_execution_deadline()?;
                 let keep = match decision {
                     RowDecision::Keep => true,
                     RowDecision::Drop => false,
-                    RowDecision::Evaluate => {
+                    RowDecision::Evaluate(predicate) => {
                         self.eval_predicate_with_resolver(&row, predicate, &mut resolver)
                             .await?
                     }

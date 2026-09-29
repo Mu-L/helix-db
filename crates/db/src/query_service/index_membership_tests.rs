@@ -1,9 +1,8 @@
 //! End-to-end post-expansion index membership through `HelixDB::query`.
 //!
 //! Every query compares the membership plan with the same data served by a
-//! database without the index, which keeps the per-row filter plan. A narrow
-//! traversal stays within one record batch of node rows, so its membership
-//! evaluates every row; a wide one exceeds it and resolves the index set.
+//! database without the index, which keeps the per-row filter plan. Narrow
+//! and wide traversals alike resolve the index set on their first node row.
 
 use helix_ast::{batch, expr, graph, index, query, traversal, value};
 use helix_planner::{context, exec, planning};
@@ -143,7 +142,7 @@ fn seed() -> batch::WriteBatch {
     })
 }
 
-/// `uid`s behind group `g3`'s items: at most one record batch of node rows.
+/// `uid`s behind group `g3`'s items: a handful of node rows.
 fn narrow(predicate: expr::Predicate) -> traversal::Traversal<traversal::Terminal> {
     traversal::g()
         .n_with_label_where("Group", expr::Predicate::eq("uid", "g3"))
@@ -320,9 +319,13 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
                 answered,
             ),
         ] {
-            // Only the wide stream reads the set its membership plans.
+            // Both streams read the set their membership plans.
             for (read, expected, resolves) in [
-                (read_result(narrow(predicate.clone())), narrow_uids, 0),
+                (
+                    read_result(narrow(predicate.clone())),
+                    narrow_uids,
+                    usize::from(planned),
+                ),
                 (
                     read_result(wide(predicate.clone())),
                     repeated(&wide_uids, WIDE.len()),
@@ -440,8 +443,8 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
     };
     // Production planning has no statistics, so the expanded stream is an
     // unbounded estimate within one record batch and the post-expansion
-    // filter plans membership, which reads its set only once the stream
-    // outgrows one batch. Statistics that make `uid` a selective seed over
+    // filter plans membership, which reads its set on the stream's first
+    // node row. Statistics that make `uid` a selective seed over
     // millions of `hub` items make the expanded stream large enough to pay
     // for the set read up front.
     let item_statistics = {
@@ -478,8 +481,8 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
         }
     };
     // `ih` reaches `a1` through `i1`, `i2`, and itself twice, and `a4`
-    // through `i3` and itself twice: one record batch, so its membership
-    // evaluates every row. Only `iw`'s 289 rows resolve the set.
+    // through `i3` and itself twice. Both hubs resolve the set on their first
+    // node row; the `leaf` seed residual leaves no node rows to decide.
     for (item, kind, expected, resolves) in [
         (
             "iw",
@@ -491,7 +494,7 @@ async fn equality_seed_residual_with_post_expansion_membership_matches_the_per_r
             "ih",
             "hub",
             vec!["a1", "a1", "a1", "a1", "a4", "a4", "a4"],
-            0,
+            1,
         ),
         ("iw", "leaf", Vec::new(), 0),
     ] {
@@ -614,10 +617,9 @@ async fn point_source_membership_matches_the_per_row_filter_contract() {
         ),
     ] {
         let wide_rows = repeated(&wide_uids, WIDE.len());
-        // Both streams plan membership; only the wide one outgrows one
-        // record batch and reads the set.
+        // Both streams plan membership and read the set.
         for (read, expected, resolves) in [
-            (read_result(narrow(predicate.clone())), narrow_uids, 0),
+            (read_result(narrow(predicate.clone())), narrow_uids, 1),
             (read_result(wide(predicate.clone())), wide_rows.clone(), 1),
         ] {
             assert_eq!(
@@ -639,8 +641,7 @@ async fn point_source_membership_matches_the_per_row_filter_contract() {
             assert_eq!(uids(&per_row["result"]), expected, "{predicate:?}");
         }
 
-        // The count cursor evaluates its first batch row by row, then reads
-        // the set for the rest of the stream.
+        // The count cursor reads the set on its first node row.
         let count = read_result(hub_targets().where_(predicate.clone()).count());
         let before = resolved(&indexed);
         let membership = indexed
@@ -736,9 +737,10 @@ async fn post_expansion_membership_sees_same_request_writes() {
     drop(prepared);
 
     // The pending inserts, edges, and label-scoped index moves are visible to
-    // both memberships before the request commits. `iw` now has 18 targets,
-    // so only the wide membership reads the set, which must already hold
-    // the moves.
+    // both memberships before the request commits. The narrow membership
+    // reads the set, which must already hold the moves, and the wide one
+    // reuses it: both plan the same membership and no write runs between
+    // them.
     let expected_wide = repeated(&["aw6", "aw12", "aw-fresh"], WIDE.len() + 1);
     let before = resolved(&db);
     let response = db.query(query::QueryRequest::write(write)).await.unwrap();
@@ -804,7 +806,7 @@ async fn post_expansion_membership_uses_each_tenant_catalog() {
         ),
     ] {
         for (read, expected, resolves) in [
-            (&narrow_read, vec!["a1", "a1"], 0),
+            (&narrow_read, vec!["a1", "a1"], planned),
             (&wide_read, wide_uids, planned),
         ] {
             assert_eq!(membership_steps(&plan(&db, read, scope).await), planned);

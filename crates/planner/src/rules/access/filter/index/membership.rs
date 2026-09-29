@@ -71,7 +71,7 @@ fn full_membership(
     .ok()?;
     let predicate = ir::PredicatePlan::new(predicate.clone()).ok()?;
     Some(MembershipFilterRewrite {
-        membership: ir::NodeIndexMembershipPlan::new(set, predicate).ok()?,
+        membership: ir::NodeIndexMembershipPlan::new(set, predicate, None).ok()?,
         residual: None,
     })
 }
@@ -89,14 +89,14 @@ fn partial_membership(
         planner_limits,
         |set, conjunct| {
             ir::PredicatePlan::new(conjunct.clone()).is_ok_and(|conjunct| {
-                ir::NodeIndexMembershipPlan::new(set.clone(), conjunct).is_ok()
+                ir::NodeIndexMembershipPlan::new(set.clone(), conjunct, None).is_ok()
             })
         },
     )
     .ok()?;
     let decided = shared::conjunction_plan(split.decided)?;
     Some(MembershipFilterRewrite {
-        membership: ir::NodeIndexMembershipPlan::new(split.source, decided).ok()?,
+        membership: ir::NodeIndexMembershipPlan::new(split.source, decided, None).ok()?,
         residual: shared::conjunction_plan(split.residual),
     })
 }
@@ -166,8 +166,16 @@ mod tests {
             let rewrite = rewrite(predicate.clone()).unwrap();
             assert_eq!(rewrite.residual, None, "{predicate:?}");
             assert_eq!(rewrite.membership.predicate().as_ref(), &predicate);
-            assert_eq!(rewrite.membership.label().as_ref(), "Item");
-            assert_eq!(rewrite.membership.outside_label(), outside);
+            let ir::NodeMembershipSet::Index {
+                label,
+                outside_label,
+                ..
+            } = rewrite.membership.set()
+            else {
+                panic!("expected an index set");
+            };
+            assert_eq!(label.as_ref(), "Item");
+            assert_eq!(*outside_label, outside);
         }
     }
 
@@ -188,10 +196,13 @@ mod tests {
                 Predicate::eq("kind", "B")
             ])
         );
-        assert_eq!(
-            scoped.membership.outside_label(),
-            ir::NodeMembershipOutsideLabel::Reject
-        );
+        assert!(matches!(
+            scoped.membership.set(),
+            ir::NodeMembershipSet::Index {
+                outside_label: ir::NodeMembershipOutsideLabel::Reject,
+                ..
+            }
+        ));
         assert_eq!(
             scoped.residual.unwrap().as_ref(),
             &Predicate::and(vec![
@@ -278,19 +289,25 @@ mod tests {
     fn membership_keeps_runtime_parameters_for_runtime_classification() {
         let equality = rewrite(Predicate::eq_param("kind", "kind")).unwrap();
         assert!(matches!(
-            equality.membership.set().as_ref(),
-            ir::NodeAccessPlan::EqualityIndex {
-                value: ir::IndexValue::Param(_),
-                ..
-            }
+            equality.membership.set(),
+            ir::NodeMembershipSet::Index { set, .. } if matches!(
+                set.as_ref(),
+                ir::NodeAccessPlan::EqualityIndex {
+                    value: ir::IndexValue::Param(_),
+                    ..
+                }
+            )
         ));
         let set = rewrite(Predicate::is_in_param("kind", "kinds")).unwrap();
         assert!(matches!(
-            set.membership.set().as_ref(),
-            ir::NodeAccessPlan::EqualityIndex {
-                value: ir::IndexValue::ParamSet(_),
-                ..
-            }
+            set.membership.set(),
+            ir::NodeMembershipSet::Index { set, .. } if matches!(
+                set.as_ref(),
+                ir::NodeAccessPlan::EqualityIndex {
+                    value: ir::IndexValue::ParamSet(_),
+                    ..
+                }
+            )
         ));
     }
 
@@ -302,7 +319,12 @@ mod tests {
                 indexes,
                 &context::PlannerLimits::default(),
             )
-            .map(|rewrite| rewrite.membership.label().as_ref().to_owned())
+            .map(|rewrite| {
+                let ir::NodeMembershipSet::Index { label, .. } = rewrite.membership.set() else {
+                    panic!("expected an index set");
+                };
+                label.as_ref().to_owned()
+            })
         };
         let key = |label, property| catalog::ScopedPropertyKey::try_new(label, property).unwrap();
         let one = catalog::IndexCatalogSnapshot::default()

@@ -320,6 +320,7 @@ fn membership_op(predicate: helix_ast::expr::Predicate) -> logical::StreamPipeli
                 })
                 .unwrap(),
                 ir::PredicatePlan::new(predicate).unwrap(),
+                None,
             )
             .unwrap(),
         ),
@@ -488,4 +489,50 @@ fn row_estimates_carry_through_expansion_and_shrink_after_membership() {
         after(&logical::StreamPipelineOp::Distinct, &unknown, 7),
         cost::EstimatedRows::rows(7)
     );
+}
+
+#[test]
+fn label_set_memberships_price_their_label_scans() {
+    let storage = cost::StorageCostProfile::default();
+    let stats = crate::context::StatsSnapshot::default()
+        .with_node_label_cardinality(ir::NonEmptyString::new("Attribute").unwrap(), 30)
+        .with_node_label_cardinality(ir::NonEmptyString::new("Note").unwrap(), 20);
+    let unknown = access_delivered(properties::ElementKind::Node);
+    let rows = cost::EstimatedRows::rows(1_000);
+    for (predicate, estimate) in [
+        (helix_ast::expr::Predicate::eq("$label", "Attribute"), 30),
+        (
+            helix_ast::expr::Predicate::is_in(
+                "$label",
+                helix_ast::value::PropertyValue::StringArray(vec![
+                    "Attribute".to_owned(),
+                    "Note".to_owned(),
+                ]),
+            ),
+            50,
+        ),
+    ] {
+        let op = logical::StreamPipelineOp::IndexMembership {
+            plan: Box::new(
+                ir::NodeIndexMembershipPlan::labels(
+                    ir::PredicatePlan::new(predicate).unwrap(),
+                    None,
+                )
+                .unwrap(),
+            ),
+        };
+        let (physical, delivered, _) =
+            stream_pipeline_op_contract(&op, unknown.clone(), rows, &storage, &stats);
+        assert_eq!(
+            physical,
+            crate::physical::PhysicalPipelineOp::Stream(
+                crate::physical::PhysicalStreamOp::IndexMembership
+            )
+        );
+        assert_eq!(delivered.cardinality, unknown.cardinality);
+        assert_eq!(
+            estimated_rows_after_op(&op, &unknown, rows, &storage, &stats),
+            cost::EstimatedRows::rows(estimate)
+        );
+    }
 }

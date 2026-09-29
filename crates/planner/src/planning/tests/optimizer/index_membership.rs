@@ -51,6 +51,37 @@ fn kind_b_policies() -> [(Predicate, crate::ir::NodeMembershipOutsideLabel); 2] 
     ]
 }
 
+/// Index-set fields of a membership. Every membership planned here decides
+/// its predicate from a secondary-index set.
+trait IndexSetFields {
+    fn index_set(&self) -> &crate::exec::ExecNodeSecondarySetPlan;
+    fn label(&self) -> &NonEmptyString;
+    fn outside_label(&self) -> crate::ir::NodeMembershipOutsideLabel;
+}
+
+impl IndexSetFields for crate::exec::ExecNodeIndexMembershipPlan {
+    fn index_set(&self) -> &crate::exec::ExecNodeSecondarySetPlan {
+        let crate::exec::ExecNodeMembershipSet::Index { set, .. } = &self.set else {
+            panic!("expected an index membership set: {:?}", self.set);
+        };
+        set
+    }
+
+    fn label(&self) -> &NonEmptyString {
+        let crate::exec::ExecNodeMembershipSet::Index { label, .. } = &self.set else {
+            panic!("expected an index membership set: {:?}", self.set);
+        };
+        label
+    }
+
+    fn outside_label(&self) -> crate::ir::NodeMembershipOutsideLabel {
+        let crate::exec::ExecNodeMembershipSet::Index { outside_label, .. } = &self.set else {
+            panic!("expected an index membership set: {:?}", self.set);
+        };
+        *outside_label
+    }
+}
+
 fn memberships(plan: &ExecutablePlan) -> Vec<&crate::exec::ExecNodeIndexMembershipPlan> {
     plan.steps()
         .iter()
@@ -107,9 +138,9 @@ fn post_expansion_equality_filter_uses_index_membership_after_out_and_in() {
             let plan = executable_traversal(traversal.values(vec!["kind"]), planner_ctx.clone());
             let membership = only_membership(&plan);
 
-            assert_eq!(membership.label.as_ref(), "Attribute");
+            assert_eq!(membership.label().as_ref(), "Attribute");
             assert_eq!(
-                membership.outside_label,
+                membership.outside_label(),
                 crate::ir::NodeMembershipOutsideLabel::Evaluate
             );
             assert_eq!(
@@ -117,7 +148,7 @@ fn post_expansion_equality_filter_uses_index_membership_after_out_and_in() {
                 &Predicate::eq("kind", "B")
             );
             assert!(matches!(
-                &membership.set,
+                &membership.index_set(),
                 crate::exec::ExecNodeSecondarySetPlan::Bitmap(
                     crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
                 ) if key.label == "Attribute" && key.property == "kind"
@@ -177,7 +208,7 @@ fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ra
         large_ctx(),
     );
     assert!(matches!(
-        &only_membership(&is_in).set,
+        &only_membership(&is_in).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::Bitmap(
             crate::exec::ExecNodeBitmapExpr::BatchedUnionRead { values, .. }
         ) if values.len() == 2
@@ -214,7 +245,7 @@ fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ra
         large_ctx(),
     );
     assert!(matches!(
-        &only_membership(&both).set,
+        &only_membership(&both).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::Bitmap(
             crate::exec::ExecNodeBitmapExpr::Intersect { .. }
         ) | crate::exec::ExecNodeSecondarySetPlan::Intersect { .. }
@@ -233,7 +264,7 @@ fn label_scoped_post_expansion_membership_rejects_other_labels_without_reads() {
     let membership = only_membership(&plan);
 
     assert_eq!(
-        membership.outside_label,
+        membership.outside_label(),
         crate::ir::NodeMembershipOutsideLabel::Reject
     );
     assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
@@ -276,7 +307,7 @@ fn late_bound_parameters_keep_runtime_classified_membership() {
         planner_ctx.clone(),
     );
     assert!(matches!(
-        &only_membership(&equality).set,
+        &only_membership(&equality).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::DynamicEquality { param, .. }
             if param.as_ref() == "kind"
     ));
@@ -286,7 +317,7 @@ fn late_bound_parameters_keep_runtime_classified_membership() {
         planner_ctx.clone(),
     );
     assert!(matches!(
-        &only_membership(&set).set,
+        &only_membership(&set).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::DynamicMembership { values, .. }
             if values.param().as_ref() == "kinds"
     ));
@@ -353,8 +384,8 @@ fn point_sources_plan_membership_without_statistics() {
             ctx(membership_indexes()),
         );
         let membership = only_membership(&plan);
-        assert_eq!(membership.outside_label, outside_label);
-        assert_eq!(membership.label.as_ref(), "Attribute");
+        assert_eq!(membership.outside_label(), outside_label);
+        assert_eq!(membership.label().as_ref(), "Attribute");
         assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
     }
 
@@ -367,7 +398,7 @@ fn point_sources_plan_membership_without_statistics() {
         ctx(membership_indexes()),
     );
     assert!(matches!(
-        &only_membership(&both).set,
+        &only_membership(&both).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::Bitmap(
             crate::exec::ExecNodeBitmapExpr::Intersect { .. }
         ) | crate::exec::ExecNodeSecondarySetPlan::Intersect { .. }
@@ -386,7 +417,7 @@ fn point_source_membership_covers_in_late_bound_and_one_hop_shapes() {
         ctx(membership_indexes()),
     );
     assert!(matches!(
-        &only_membership(&is_in).set,
+        &only_membership(&is_in).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::Bitmap(
             crate::exec::ExecNodeBitmapExpr::BatchedUnionRead { values, .. }
         ) if values.len() == 2
@@ -399,7 +430,7 @@ fn point_source_membership_covers_in_late_bound_and_one_hop_shapes() {
         late_bound,
     );
     assert!(matches!(
-        &only_membership(&equality).set,
+        &only_membership(&equality).index_set(),
         crate::exec::ExecNodeSecondarySetPlan::DynamicEquality { param, .. }
             if param.as_ref() == "kind"
     ));
@@ -411,7 +442,7 @@ fn point_source_membership_covers_in_late_bound_and_one_hop_shapes() {
             .values(vec!["kind"]),
         ctx(membership_indexes()),
     );
-    assert_eq!(only_membership(&one_hop).label.as_ref(), "Attribute");
+    assert_eq!(only_membership(&one_hop).label().as_ref(), "Attribute");
     assert!(
         filter_predicates(&one_hop).is_empty(),
         "{:#?}",
@@ -430,7 +461,7 @@ fn point_source_membership_covers_in_late_bound_and_one_hop_shapes() {
         attributes_where(Predicate::eq("kind", "B")).values(vec!["kind"]),
         unique,
     );
-    assert_eq!(only_membership(&plan).label.as_ref(), "Attribute");
+    assert_eq!(only_membership(&plan).label().as_ref(), "Attribute");
     assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
 }
 
@@ -443,7 +474,7 @@ fn point_source_membership_feeds_pull_exists_count_and_variable_pipelines() {
                 .values(vec!["kind"]),
             ctx(membership_indexes()),
         );
-        assert_eq!(only_membership(&limited).outside_label, outside_label);
+        assert_eq!(only_membership(&limited).outside_label(), outside_label);
         let position = |family: fn(&ExecOp) -> bool| {
             limited
                 .steps()
@@ -462,7 +493,7 @@ fn point_source_membership_feeds_pull_exists_count_and_variable_pipelines() {
             attributes_where(predicate.clone()).exists(),
             ctx(membership_indexes()),
         );
-        assert_eq!(only_membership(&exists).outside_label, outside_label);
+        assert_eq!(only_membership(&exists).outside_label(), outside_label);
         assert!(
             filter_predicates(&exists).is_empty(),
             "{:#?}",
@@ -477,7 +508,7 @@ fn point_source_membership_feeds_pull_exists_count_and_variable_pipelines() {
         else {
             panic!("expected a membership count cursor: {:#?}", count.steps());
         };
-        assert_eq!(plan.outside_label, outside_label);
+        assert_eq!(plan.outside_label(), outside_label);
 
         let batch = read_batch()
             .var_as(
@@ -494,7 +525,7 @@ fn point_source_membership_feeds_pull_exists_count_and_variable_pipelines() {
             )
             .returning(["result"]);
         let plan = crate::planning::plan_read_batch(&batch, &ctx(membership_indexes())).unwrap();
-        assert_eq!(only_membership(&plan).outside_label, outside_label);
+        assert_eq!(only_membership(&plan).outside_label(), outside_label);
         assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
     }
 }
@@ -512,7 +543,7 @@ fn post_expansion_membership_feeds_counts_and_variable_pipelines() {
             else {
                 panic!("expected a membership count cursor: {:#?}", count.steps());
             };
-            assert_eq!(plan.outside_label, outside_label);
+            assert_eq!(plan.outside_label(), outside_label);
 
             let batch = read_batch()
                 .var_as(
@@ -530,8 +561,8 @@ fn post_expansion_membership_feeds_counts_and_variable_pipelines() {
                 .returning(["result"]);
             let plan = crate::planning::plan_read_batch(&batch, &planner_ctx).unwrap();
             let membership = only_membership(&plan);
-            assert_eq!(membership.label.as_ref(), "Attribute");
-            assert_eq!(membership.outside_label, outside_label);
+            assert_eq!(membership.label().as_ref(), "Attribute");
+            assert_eq!(membership.outside_label(), outside_label);
             assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
         }
     }
@@ -550,7 +581,7 @@ fn unscoped_membership_needs_exactly_one_indexed_label() {
     };
     for (predicate, outside_label) in kind_b_policies() {
         let plan = executable_traversal(label_scan(predicate), ctx(membership_indexes()));
-        assert_eq!(only_membership(&plan).outside_label, outside_label);
+        assert_eq!(only_membership(&plan).outside_label(), outside_label);
     }
 
     // A second label indexing `kind` leaves the expansion's label ambiguous,
@@ -572,7 +603,7 @@ fn unscoped_membership_needs_exactly_one_indexed_label() {
             .values(vec!["kind"]),
             ambiguous,
         );
-        assert_eq!(only_membership(&plan).label.as_ref(), "Note");
+        assert_eq!(only_membership(&plan).label().as_ref(), "Note");
     }
 }
 
@@ -610,7 +641,7 @@ fn proven_bounds_decide_at_the_bound() {
                 .values(vec!["kind"]),
             ctx(membership_indexes()),
         );
-        assert_eq!(only_membership(&plan).outside_label, outside_label);
+        assert_eq!(only_membership(&plan).outside_label(), outside_label);
 
         // A limit after the filter leaves the filter's input unbounded.
         let plan = executable_traversal(
@@ -620,7 +651,7 @@ fn proven_bounds_decide_at_the_bound() {
                 .values(vec!["kind"]),
             ctx(membership_indexes()),
         );
-        assert_eq!(only_membership(&plan).outside_label, outside_label);
+        assert_eq!(only_membership(&plan).outside_label(), outside_label);
     }
 }
 
@@ -725,7 +756,7 @@ fn ambiguous_unscoped_labels_keep_the_filter_behind_point_sources() {
         .values(vec!["kind"]),
         ambiguous,
     );
-    assert_eq!(only_membership(&plan).label.as_ref(), "Note");
+    assert_eq!(only_membership(&plan).label().as_ref(), "Note");
 }
 
 /// `large_ctx` with a second, broad `Group` equality index. `name = g3`
@@ -779,7 +810,7 @@ fn assert_seed_residual_then_membership(plan: &ExecutablePlan) {
         plan.steps()
     );
     let membership = only_membership(plan);
-    assert_eq!(membership.label.as_ref(), "Attribute");
+    assert_eq!(membership.label().as_ref(), "Attribute");
     assert_eq!(
         membership.predicate.predicate(),
         &Predicate::eq("kind", "B")
@@ -966,8 +997,8 @@ fn equality_seed_residual_stays_a_filter_under_a_count_with_membership() {
                     crate::exec::ExecCountCursorPlan::NodeBitmap(
                         crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
                     ),
-                ] if membership.label.as_ref() == "Attribute"
-                    && membership.outside_label == outside_label
+                ] if membership.label().as_ref() == "Attribute"
+                    && membership.outside_label() == outside_label
                     && predicate.predicate()
                         == &Predicate::and(vec![Predicate::eq("region", "west")])
                     && key.property == "name"
@@ -1035,7 +1066,7 @@ fn membership_choice_is_deterministic() {
                 .project(vec![Projection::property("$id", "id")])
         };
         let plan = executable_traversal(within(), planner_ctx.clone());
-        assert_eq!(only_membership(&plan).outside_label, outside_label);
+        assert_eq!(only_membership(&plan).outside_label(), outside_label);
 
         for shape in [
             attributes_where(predicate.clone()).values(vec!["kind"]),

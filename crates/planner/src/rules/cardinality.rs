@@ -1788,17 +1788,23 @@ fn cursor_cost(
         }
         exec::ExecCountCursorPlan::Filter { input, .. } => cursor_cost(input, stats, storage)
             .serial(storage.stored_predicate_filter(storage.default_unknown_scan_rows)),
-        exec::ExecCountCursorPlan::IndexMembership { input, plan } => cursor_cost(
-            input, stats, storage,
-        )
-        .serial(storage.index_membership_filter(
-            plan.predicate.as_ref(),
-            storage.bitmap_equality_lookup(storage.default_equality_index_rows),
-            super::membership_label_domain_cost(plan.outside_label, &plan.label, stats, storage),
-            // A count cursor proves no bound on its input and prices every
-            // operator at the unknown-input default.
-            cost::MembershipStream::MayExceedOneBatch(storage.default_unknown_scan_rows),
-        )),
+        exec::ExecCountCursorPlan::IndexMembership { input, plan } => {
+            cursor_cost(input, stats, storage).serial(storage.index_membership_filter(
+                plan.predicate.as_ref(),
+                storage.bitmap_equality_lookup(storage.default_equality_index_rows),
+                match &plan.set {
+                    exec::ExecNodeMembershipSet::Index {
+                        label,
+                        outside_label,
+                        ..
+                    } => super::membership_label_domain_cost(*outside_label, label, stats, storage),
+                    exec::ExecNodeMembershipSet::Labels(_) => None,
+                },
+                // A count cursor proves no bound on its input and prices every
+                // operator at the unknown-input default.
+                cost::MembershipStream::MayExceedOneBatch(storage.default_unknown_scan_rows),
+            ))
+        }
         exec::ExecCountCursorPlan::Window { input, .. } => cursor_cost(input, stats, storage),
         exec::ExecCountCursorPlan::Order { input, .. } => cursor_cost(input, stats, storage)
             .serial(storage.explicit_sort(storage.default_unknown_scan_rows)),
@@ -4241,6 +4247,7 @@ mod tests {
                     })
                     .unwrap(),
                     ir::PredicatePlan::new(predicate).unwrap(),
+                    None,
                 )
                 .unwrap(),
             )),
@@ -4264,9 +4271,27 @@ mod tests {
             let exec::ExecCountCursorPlan::IndexMembership { plan, .. } = membership else {
                 panic!("expected an index membership cursor");
             };
-            assert_eq!(plan.outside_label, outside_label);
+            assert!(matches!(
+                &plan.set,
+                exec::ExecNodeMembershipSet::Index { outside_label: policy, .. }
+                    if *policy == outside_label
+            ));
             assert!(cursor_cost(membership, &stats, &storage).latency < per_row.latency);
         }
+
+        // A `$label` set rejects every node outside its labels without a
+        // label-domain read, so it also beats the filter.
+        let labels = exec::ExecCountCursorPlan::IndexMembership {
+            input: input(),
+            plan: Box::new(exec::ExecNodeIndexMembershipPlan::from(
+                &ir::NodeIndexMembershipPlan::labels(
+                    ir::PredicatePlan::new(Predicate::eq("$label", "Attribute")).unwrap(),
+                    None,
+                )
+                .unwrap(),
+            )),
+        };
+        assert!(cursor_cost(&labels, &stats, &storage).latency < per_row.latency);
 
         // Statistics can still veto an unscoped membership over a huge label.
         let huge_label = context::StatsSnapshot::default()

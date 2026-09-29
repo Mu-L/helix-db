@@ -7193,6 +7193,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                     ir::NodeAccessSourcePlan::new(set).expect("membership set is a node source"),
                     ir::PredicatePlan::new(predicate.clone())
                         .expect("membership predicate validates"),
+                    None,
                 )
                 .expect("membership plan validates"),
             )),
@@ -7242,25 +7243,38 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
     else {
         unreachable!("the membership helper builds membership");
     };
+    let exec::ExecNodeMembershipSet::Index {
+        set: kind_a_set,
+        label: kind_a_label,
+        outside_label: kind_a_outside,
+    } = &kind_a.set
+    else {
+        unreachable!("an equality membership has an index set");
+    };
     let union = exec::ExecOp::IndexMembership {
         plan: Box::new(exec::ExecNodeIndexMembershipPlan {
-            set: exec::ExecNodeSecondarySetPlan::Union {
-                driver: Box::new(kind_a.set.clone()),
-                rest: ir::AtLeast::<_, 1>::from_one(exec::ExecNodeSecondarySetPlan::Range(
-                    exec::ExecNodeSecondaryRangePlan {
-                        index: with_catalog.indexes.node_range[&rank_key].clone(),
-                        key: rank_key,
-                        range: ir::IndexRange::Lower {
-                            lower: ir::IndexBound::Inclusive(
-                                ir::RangeIndexValue::literal(9_i64.into())
-                                    .expect("range literal validates"),
-                            ),
+            set: exec::ExecNodeMembershipSet::Index {
+                set: exec::ExecNodeSecondarySetPlan::Union {
+                    driver: Box::new(kind_a_set.clone()),
+                    rest: ir::AtLeast::<_, 1>::from_one(exec::ExecNodeSecondarySetPlan::Range(
+                        exec::ExecNodeSecondaryRangePlan {
+                            index: with_catalog.indexes.node_range[&rank_key].clone(),
+                            key: rank_key,
+                            range: ir::IndexRange::Lower {
+                                lower: ir::IndexBound::Inclusive(
+                                    ir::RangeIndexValue::literal(9_i64.into())
+                                        .expect("range literal validates"),
+                                ),
+                            },
+                            iteration: ir::RangeScanIteration::Forward,
                         },
-                        iteration: ir::RangeScanIteration::Forward,
-                    },
-                )),
+                    )),
+                },
+                label: kind_a_label.clone(),
+                outside_label: *kind_a_outside,
             },
-            ..*kind_a
+            predicate: kind_a.predicate.clone(),
+            residual: None,
         }),
     };
     // Validated plans never carry an authoritative-scan set, but the
@@ -7269,12 +7283,15 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
     let null_kind = Predicate::eq("kind", PropertyValue::Null);
     let authoritative = exec::ExecOp::IndexMembership {
         plan: Box::new(exec::ExecNodeIndexMembershipPlan {
-            set: exec::ExecNodeSecondarySetPlan::AuthoritativeScan(
-                exec::ExecNodeAuthoritativeScanPredicate::NullEquality { key: kind_key },
-            ),
-            label: ir::NonEmptyString::new("Attribute").expect("label is non-empty"),
+            set: exec::ExecNodeMembershipSet::Index {
+                set: exec::ExecNodeSecondarySetPlan::AuthoritativeScan(
+                    exec::ExecNodeAuthoritativeScanPredicate::NullEquality { key: kind_key },
+                ),
+                label: ir::NonEmptyString::new("Attribute").expect("label is non-empty"),
+                outside_label: ir::NodeMembershipOutsideLabel::Evaluate,
+            },
             predicate: ir::PredicatePlan::new(null_kind.clone()).expect("null predicate validates"),
-            outside_label: ir::NodeMembershipOutsideLabel::Evaluate,
+            residual: None,
         }),
     };
     let kind_b = Predicate::eq("kind", "B");
@@ -7291,9 +7308,9 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         )),
         &kind_b_and_uid_a1,
     );
-    // Membership resolves its set only for more node rows than one 256-row
-    // record batch, so the hand-built node rows repeat the six traversal rows
-    // 50 times. A window of 200 still pulls every node row for each shape.
+    // The hand-built node rows repeat the six traversal rows 50 times, so
+    // every shape decides rows across several record batches. A window of
+    // 200 still pulls every node row for each shape.
     let with_nodes = |nodes: &PropertyValue, repeats: usize| {
         let PropertyValue::I64Array(nodes) = nodes else {
             panic!("element reads return an ID array");
@@ -7344,14 +7361,6 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 &edge_rows,
                 1,
             ),
-            // Six node rows stay within one record batch and never resolve
-            // the corrupt identity.
-            (
-                membership(equality(corrupt.clone(), "kind", "B"), &kind_b),
-                kind_b.clone(),
-                &narrow_rows,
-                4,
-            ),
             (
                 union.clone(),
                 kind_a_or_rank_9.clone(),
@@ -7389,22 +7398,24 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 "{predicate:?}, window {window}"
             );
         }
-        // More node rows than one record batch force the corrupt identity to
-        // resolve, which fails closed.
-        let error = db
-            .execute(
-                &mixed(
-                    membership(equality(corrupt.clone(), "kind", "B"), &kind_b),
-                    window,
-                ),
-                mixed_rows.clone(),
-            )
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(error, db::error::HelixDbError::IndexCatalogCorruption(_)),
-            "{error:?}"
-        );
+        // Any node row resolves the set, so the corrupt identity fails
+        // closed however few node rows the stream has.
+        for rows in [&narrow_rows, &mixed_rows] {
+            let error = db
+                .execute(
+                    &mixed(
+                        membership(equality(corrupt.clone(), "kind", "B"), &kind_b),
+                        window,
+                    ),
+                    rows.clone(),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, db::error::HelixDbError::IndexCatalogCorruption(_)),
+                "{error:?}"
+            );
+        }
     }
 
     // Membership in a write request flushes the request's pending secondary
