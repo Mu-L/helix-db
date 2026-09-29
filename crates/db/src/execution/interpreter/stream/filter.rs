@@ -243,6 +243,11 @@ impl<'db> ExecutionContext<'db> {
     /// Both reads go through the request snapshot or write transaction and
     /// its Active catalog. A set that needs an authoritative scan, or an index
     /// the catalog no longer serves, falls back to exact per-row evaluation.
+    ///
+    /// The set keeps at most `PARALLEL_INDEX_READS` leaf index reads in
+    /// flight, and the label domain of an `Evaluate` policy is read alongside
+    /// it, so one resolve keeps at most `PARALLEL_INDEX_READS + 1` reads in
+    /// flight.
     async fn prepare_index_membership(
         &self,
         plan: &exec::ExecNodeIndexMembershipPlan,

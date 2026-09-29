@@ -12,7 +12,7 @@ mod vector;
 pub use profile::{StorageCostProfile, StorageCostProfileOverrides};
 pub use units::{
     ByteEstimate, EstimatedRows, EstimatedRowsAtMost, LatencyEstimate, MembershipStream,
-    RecordBatchRows, Selectivity, UniqueEqualityRows, RECORD_BATCH_ROWS,
+    RecordBatchRows, Selectivity, UniqueEqualityRows, MAX_PARALLEL_KV_READS, RECORD_BATCH_ROWS,
 };
 pub use vector::CostVector;
 

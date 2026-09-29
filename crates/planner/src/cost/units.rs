@@ -174,6 +174,25 @@ pub type UniqueEqualityRows = EstimatedRowsAtMost<1>;
 /// execution share one threshold.
 pub const RECORD_BATCH_ROWS: u64 = 256;
 
+/// Default concurrent key-value reads one operator keeps in flight.
+///
+/// [`StorageCostProfile::max_parallel_kv_reads`] defaults to this value, and
+/// the interpreter bounds the concurrent child reads of one secondary-index set
+/// by it. A profile override tunes pricing only: executable plans carry no
+/// concurrency for index sets, so execution always uses this default.
+///
+/// [`StorageCostProfile::max_parallel_kv_reads`]: crate::cost::StorageCostProfile::max_parallel_kv_reads
+///
+/// ```
+/// use helix_planner::cost::{StorageCostProfile, MAX_PARALLEL_KV_READS};
+/// assert_eq!(
+///     StorageCostProfile::default().max_parallel_kv_reads.get(),
+///     MAX_PARALLEL_KV_READS.get()
+/// );
+/// ```
+pub const MAX_PARALLEL_KV_READS: core::num::NonZeroUsize =
+    core::num::NonZeroUsize::new(16).expect("16 is positive");
+
 /// Row estimate proven to fit in one record batch.
 pub type RecordBatchRows = EstimatedRowsAtMost<RECORD_BATCH_ROWS>;
 
