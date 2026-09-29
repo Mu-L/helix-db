@@ -616,5 +616,11 @@
     "line": 3602,
     "reason": "This closing edge belongs to the platform-gated u64-to-usize payload accounting failure that cannot occur on supported 64-bit production targets.",
     "evidence": "vector_build_cache_reuses_only_exact_committed_checkpoints and db-vector-production-coverage architecture matrix"
+  },
+  {
+    "path": "crates/db/src/search/vector/cache/hydration.rs",
+    "line": 345,
+    "reason": "The reader-outrun branch is exercised, but LLVM does not attribute the tracing macro field expression to the enclosing covered branch.",
+    "evidence": "vector_hydration_exercises_active_generation_boundaries"
   }
 ]
