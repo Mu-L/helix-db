@@ -6752,6 +6752,15 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
     };
     let is_membership =
         |step: &exec::ExecStep| matches!(step.op, exec::ExecOp::IndexMembership { .. });
+    // Without a catalog a label-scoped filter still reads the `$label` bitmap,
+    // but never a secondary index.
+    let is_index_set_membership = |step: &exec::ExecStep| {
+        matches!(
+            &step.op,
+            exec::ExecOp::IndexMembership { plan }
+                if matches!(plan.set, exec::ExecNodeMembershipSet::Index { .. })
+        )
+    };
     let bind = |name: &str, value: PropertyValue| {
         context::ParamBindings::default().with_value(
             ir::NonEmptyString::new(name).expect("parameter name is non-empty"),
@@ -6929,12 +6938,11 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             false,
         ),
     ] {
-        // Production planning has no statistics, so the label scan behind
-        // every checked shape keeps the unknown-scan estimate, past one
-        // record batch. Membership then amortizes its set reads whether the
-        // predicate is unscoped, evaluating rows of other labels, or scoped
-        // to `Attribute`, rejecting them, whenever an index answers one of
-        // its conjuncts.
+        // An unscoped predicate plans membership, evaluating rows of other
+        // labels, whenever an index answers one of its conjuncts. Scoped to
+        // `Attribute` it always plans membership and rejects other labels:
+        // a predicate no index answers reads the `Attribute` label bitmap
+        // and evaluates only that label's nodes.
         // A nested conjunction would hide its conjuncts from the index split.
         let conjuncts = if let Predicate::And { predicates } = &unscoped {
             predicates.clone()
@@ -6952,7 +6960,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             .filter(|uid| uid.starts_with('a'))
             .collect::<Vec<_>>();
         for (predicate, expected, planned) in
-            [(unscoped, expected, indexed), (scoped, attributes, indexed)]
+            [(unscoped, expected, indexed), (scoped, attributes, true)]
         {
             let filtered = |group: &str| {
                 traversal::g()
@@ -6989,7 +6997,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                     planning::plan_read_batch(&read, &without_catalog).unwrap_or_else(|error| {
                         panic!("{predicate:?} plans without the catalog: {error}")
                     });
-                assert!(!per_row.steps().iter().any(is_membership));
+                assert!(!per_row.steps().iter().any(is_index_set_membership));
                 let membership_rows = db
                     .execute(&membership, params.clone())
                     .await

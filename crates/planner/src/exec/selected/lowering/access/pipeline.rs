@@ -10,7 +10,6 @@ impl ExecutableDagBuilder<'_> {
         condition: ExecCondition,
     ) -> Result<ExecStepId, ExecPlanError> {
         let rows = selected_rows_for_delivered(&delivered, self.profile);
-        let upper = delivered.cardinality.upper();
         let draft = match op {
             logical::StreamPipelineOp::Filter { predicate } => StepDraft {
                 dependencies: vec![input_id],
@@ -36,9 +35,22 @@ impl ExecutableDagBuilder<'_> {
                 delivered: filtered_delivered_properties(delivered),
                 // Lowering has no statistics; selection already priced the set.
                 cost: self.profile.index_membership_filter(
-                    plan.predicate().as_ref(),
-                    self.profile
-                        .bitmap_equality_lookup(self.profile.default_equality_index_rows),
+                    match plan.set() {
+                        ir::NodeMembershipSet::Index { .. } => self
+                            .profile
+                            .bitmap_equality_lookup(self.profile.default_equality_index_rows),
+                        ir::NodeMembershipSet::Labels(labels) => self.profile.parallel(
+                            &labels
+                                .iter()
+                                .map(|_| {
+                                    self.profile.bitmap_equality_lookup(
+                                        self.profile.default_unknown_scan_rows,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                            self.profile.max_parallel_kv_reads,
+                        ),
+                    },
                     match plan.set() {
                         ir::NodeMembershipSet::Index {
                             outside_label: ir::NodeMembershipOutsideLabel::Evaluate,
@@ -53,7 +65,9 @@ impl ExecutableDagBuilder<'_> {
                         }
                         | ir::NodeMembershipSet::Labels(_) => None,
                     },
-                    cost::MembershipStream::new(rows, upper),
+                    plan.residual().map(AsRef::as_ref),
+                    rows,
+                    self.profile.default_equality_index_rows,
                 ),
             },
             logical::StreamPipelineOp::Window { window } => selected_access_window_step_draft(

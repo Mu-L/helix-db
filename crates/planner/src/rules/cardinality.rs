@@ -31,6 +31,11 @@ impl optimizer::OptimizerRule for StreamCardinalityImplementationRule {
         let logical::LogicalExpr::StreamCardinality(cardinality) = input.expr else {
             return optimizer::RuleResult::NotApplicable;
         };
+        if crate::rules::membership_rewrite(input.expr, input.indexes, input.planner_limits)
+            .is_some()
+        {
+            return optimizer::RuleResult::NotApplicable;
+        }
         let plans = match count_plans(cardinality.input(), &input) {
             Ok(plans) => plans,
             Err(rejection) => return optimizer::RuleResult::Rejected(rejection),
@@ -1789,20 +1794,30 @@ fn cursor_cost(
         exec::ExecCountCursorPlan::Filter { input, .. } => cursor_cost(input, stats, storage)
             .serial(storage.stored_predicate_filter(storage.default_unknown_scan_rows)),
         exec::ExecCountCursorPlan::IndexMembership { input, plan } => {
+            // A count cursor proves no bound on its input and prices every
+            // operator at the unknown-input default; an index set holds the
+            // default equality rows.
+            let (set, label_domain, matches) = match &plan.set {
+                exec::ExecNodeMembershipSet::Index {
+                    label,
+                    outside_label,
+                    ..
+                } => (
+                    storage.bitmap_equality_lookup(storage.default_equality_index_rows),
+                    super::membership_label_domain_cost(*outside_label, label, stats, storage),
+                    storage.default_equality_index_rows,
+                ),
+                exec::ExecNodeMembershipSet::Labels(labels) => {
+                    let (set, matches) = super::membership_labels_cost(labels, stats, storage);
+                    (set, None, matches)
+                }
+            };
             cursor_cost(input, stats, storage).serial(storage.index_membership_filter(
-                plan.predicate.as_ref(),
-                storage.bitmap_equality_lookup(storage.default_equality_index_rows),
-                match &plan.set {
-                    exec::ExecNodeMembershipSet::Index {
-                        label,
-                        outside_label,
-                        ..
-                    } => super::membership_label_domain_cost(*outside_label, label, stats, storage),
-                    exec::ExecNodeMembershipSet::Labels(_) => None,
-                },
-                // A count cursor proves no bound on its input and prices every
-                // operator at the unknown-input default.
-                cost::MembershipStream::MayExceedOneBatch(storage.default_unknown_scan_rows),
+                set,
+                label_domain,
+                plan.residual.as_ref().map(AsRef::as_ref),
+                storage.default_unknown_scan_rows,
+                matches,
             ))
         }
         exec::ExecCountCursorPlan::Window { input, .. } => cursor_cost(input, stats, storage),
@@ -4233,7 +4248,7 @@ mod tests {
     }
 
     #[test]
-    fn membership_count_cursor_beats_the_filter_without_statistics() {
+    fn membership_count_cursor_prices_set_reads_not_records() {
         let storage = cost::StorageCostProfile::default();
         let input = || Box::new(exec::ExecCountCursorPlan::NodeLabelBitmap(name("Group")));
         let membership = |predicate: Predicate| exec::ExecCountCursorPlan::IndexMembership {
@@ -4293,12 +4308,22 @@ mod tests {
         };
         assert!(cursor_cost(&labels, &stats, &storage).latency < per_row.latency);
 
-        // Statistics can still veto an unscoped membership over a huge label.
+        // No membership reads a record, and a huge label bitmap only raises
+        // the unscoped membership's latency.
+        let source = cursor_cost(&input(), &stats, &storage);
+        for membership in [&evaluate, &reject, &labels] {
+            assert_eq!(
+                cursor_cost(membership, &stats, &storage).authoritative_graph_reads,
+                source.authoritative_graph_reads
+            );
+        }
         let huge_label = context::StatsSnapshot::default()
             .with_node_label_cardinality(name("Attribute"), 10_000_000);
-        assert!(
-            cursor_cost(&evaluate, &huge_label, &storage).latency
-                > cursor_cost(&filter, &huge_label, &storage).latency
+        let huge = cursor_cost(&evaluate, &huge_label, &storage);
+        assert!(huge.latency > cursor_cost(&evaluate, &stats, &storage).latency);
+        assert_eq!(
+            huge.authoritative_graph_reads,
+            source.authoritative_graph_reads
         );
     }
 }
