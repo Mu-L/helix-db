@@ -7477,8 +7477,8 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
     written.sort();
     assert_eq!(written, ["a5"]);
 
-    // Past one record batch of node rows the membership resolves its set,
-    // which must already hold the request's pending index move and new node.
+    // A wide stream of several hundred node rows resolves the same set, which
+    // must already hold the request's pending index move and new node.
     let wide_write = batch::write_batch()
         .var_as(
             "hub",
