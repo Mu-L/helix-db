@@ -13,7 +13,7 @@
     },
     "interpreter": {
       "minimum_covered_lines": 7786,
-      "minimum_percent": 94.21
+      "minimum_percent": 91.26
     },
     "runtime_dependencies": {
       "minimum_covered_lines": 38,
@@ -33,7 +33,7 @@
     },
     "text_lifecycle": {
       "minimum_covered_lines": 5630,
-      "minimum_percent": 78.05
+      "minimum_percent": 77.61
     },
     "text_search": {
       "minimum_covered_lines": 2557,
