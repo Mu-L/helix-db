@@ -18,7 +18,7 @@ pub mod index_lifecycle;
 #[cfg(feature = "index-lifecycle-testing")]
 pub mod index_lifecycle_testing;
 mod merge_operator;
-#[cfg(feature = "migration-parity")]
+#[cfg(feature = "production-coverage")]
 pub mod migration_parity;
 pub mod migrations;
 pub mod query_service;
@@ -942,7 +942,7 @@ impl HelixDB {
     }
 
     /// Opens one parity-harness process over a caller-provided store.
-    #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
+    #[cfg(feature = "production-coverage")]
     pub async fn open_with_object_store_for_migration_parity(
         database: impl Into<String>,
         object_store: Arc<dyn ObjectStore>,
@@ -2948,7 +2948,7 @@ impl HelixDB {
             .ok_or(HelixDbError::DatabaseClosed)
     }
 
-    #[cfg(any(test, feature = "migration-parity", feature = "production-coverage"))]
+    #[cfg(any(test, feature = "production-coverage"))]
     /// Advances at most one immediately eligible background migration step.
     ///
     /// This writer-only surface is available only when the migration worker is
@@ -4283,7 +4283,7 @@ mod tests {
         writer.close().await.expect("winning writer closes");
     }
 
-    #[cfg(feature = "migration-parity")]
+    #[cfg(feature = "production-coverage")]
     #[tokio::test]
     async fn old_storage_reader_stays_available_until_managed_writer_migrates() {
         let token =
