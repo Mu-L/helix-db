@@ -63,6 +63,15 @@ pub(in crate::execution::interpreter) enum PreparedIndexMembership {
 /// Entries hold at most one set per distinct plan in the request. A plan that
 /// is not equal to itself, because a predicate constant is NaN, is never
 /// stored and resolves on every execution instead.
+///
+/// Cost: since a membership resolves on its first node row, with no per-row
+/// prefix for short streams, a statement after a mutation and a `ForEach`
+/// body re-read the whole set, plus the label bitmap of an `Evaluate` policy,
+/// once per mutation or frame that reaches a node row. A `ForEach` over `F`
+/// items therefore reads `F` label-sized sets, not `F` few-row batches. The
+/// cache is also per step context, so parallel steps each resolve their own
+/// copy. Keeping entries across frames and mutations that leave a plan's
+/// inputs unchanged is tracked separately.
 #[derive(Debug, Default)]
 pub(in crate::execution::interpreter) struct PreparedMemberships(
     Vec<(
@@ -250,7 +259,9 @@ impl<'db> ExecutionContext<'db> {
     /// flight, and the label domain of an `Evaluate` policy is read alongside
     /// it, so one resolve keeps at most `PARALLEL_INDEX_READS + 1` reads in
     /// flight. A `$label` set reads at most `PARALLEL_INDEX_READS` label
-    /// bitmaps at once and rejects every other node.
+    /// bitmaps at once and rejects every other node. Reads beyond one per set
+    /// also draw on the request's shared budget (see
+    /// `access::SharedIndexReads`), so parallel steps cannot multiply them.
     async fn prepare_index_membership(
         &self,
         plan: &exec::ExecNodeIndexMembershipPlan,
@@ -319,12 +330,17 @@ impl<'db> ExecutionContext<'db> {
     ///
     /// Each batch prefetches the records of rows whose predicate always reads
     /// them, so a batch reads each record at most once.
+    ///
+    /// `decide` answers with the few predicates of one plan (the whole
+    /// predicate and a residual), so whether a predicate always reads the
+    /// record is computed once per distinct predicate reference, not per row.
     async fn retain_rows<'p>(
         &self,
         rows: Vec<ExecutionRow>,
         decide: impl Fn(&ExecutionRow) -> RowDecision<'p>,
     ) -> Result<Vec<ExecutionRow>> {
         let mut kept = Vec::new();
+        let mut always_reads = Vec::<(&'p Predicate, bool)>::new();
         let mut rows = rows.into_iter().map(|row| (decide(&row), row));
         loop {
             let batch = rows.by_ref().take(RECORD_BATCH_ROWS).collect::<Vec<_>>();
@@ -337,8 +353,18 @@ impl<'db> ExecutionContext<'db> {
                     batch
                         .iter()
                         .filter(|(decision, _)| {
-                            matches!(decision, RowDecision::Evaluate(predicate)
-                                if always_reads_element_record(predicate))
+                            let RowDecision::Evaluate(predicate) = decision else {
+                                return false;
+                            };
+                            always_reads
+                                .iter()
+                                .find(|(known, _)| core::ptr::eq(*known, *predicate))
+                                .map(|(_, reads)| *reads)
+                                .unwrap_or_else(|| {
+                                    let reads = always_reads_element_record(predicate);
+                                    always_reads.push((predicate, reads));
+                                    reads
+                                })
                         })
                         .filter_map(|(_, row)| row.current.as_ref()),
                 )

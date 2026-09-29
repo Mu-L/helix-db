@@ -26,6 +26,15 @@ use crate::{analysis, catalog, context, ir};
 /// filter, or an ambiguous unscoped one with a label conjunct) is decided by
 /// the `$label` bitmaps of that domain, within the union branch limit, and
 /// keeps its other conjuncts as the residual.
+///
+/// `$label` is always indexed by its bitmaps, so a label conjunct is never
+/// decided by reading records, even when no property index answers the rest.
+/// The cost is that membership reads whole sets: a short stream over a huge
+/// label, such as `.out().where($label == "X").limit(1)` from a node with
+/// three neighbours, decodes the label's full bitmap where a per-row filter
+/// would read three records, and an `Evaluate` policy also decodes the
+/// label bitmap of its index set. The executor resolves each set once per
+/// request state and reads the bitmaps of a label domain concurrently.
 pub(in crate::rules) fn index_membership_filter(
     predicate: &ir::PredicatePlan,
     indexes: &catalog::IndexCatalogSnapshot,
@@ -261,6 +270,34 @@ mod tests {
                 outside_label(&membership),
                 ir::NodeMembershipOutsideLabel::Evaluate
             );
+        }
+    }
+
+    #[test]
+    fn nested_residual_conjunctions_still_fuse_into_index_membership() {
+        let kind = Predicate::eq("kind", "B");
+        let pair = Predicate::and(vec![
+            Predicate::contains("title", "x"),
+            Predicate::contains("name", "y"),
+        ]);
+        let impossible = Predicate::and(vec![
+            Predicate::eq("$label", "Item"),
+            Predicate::eq("$label", "Group"),
+        ]);
+        for nested in [
+            Predicate::and(vec![kind.clone(), pair.clone()]),
+            Predicate::and(vec![
+                kind.clone(),
+                Predicate::or(vec![pair.clone(), impossible]),
+            ]),
+        ] {
+            let membership = rewrite(nested.clone()).unwrap();
+            assert_eq!(
+                outside_label(&membership),
+                ir::NodeMembershipOutsideLabel::Evaluate,
+                "{nested:?}"
+            );
+            assert_eq!(membership.residual().unwrap().as_ref(), &pair);
         }
     }
 

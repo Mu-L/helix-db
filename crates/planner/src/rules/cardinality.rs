@@ -1814,7 +1814,11 @@ fn cursor_cost(
             };
             cursor_cost(input, stats, storage).serial(storage.index_membership_filter(
                 set,
-                label_domain,
+                label_domain.map(|(read, label_rows)| cost::MembershipLabelDomain {
+                    read,
+                    label_rows,
+                    predicate: plan.predicate.predicate(),
+                }),
                 plan.residual.as_ref().map(AsRef::as_ref),
                 storage.default_unknown_scan_rows,
                 matches,

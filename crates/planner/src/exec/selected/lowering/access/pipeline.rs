@@ -55,10 +55,13 @@ impl ExecutableDagBuilder<'_> {
                         ir::NodeMembershipSet::Index {
                             outside_label: ir::NodeMembershipOutsideLabel::Evaluate,
                             ..
-                        } => Some(
-                            self.profile
+                        } => Some(crate::cost::MembershipLabelDomain {
+                            read: self
+                                .profile
                                 .bitmap_equality_lookup(self.profile.default_unknown_scan_rows),
-                        ),
+                            label_rows: self.profile.default_unknown_scan_rows,
+                            predicate: plan.predicate().as_ref(),
+                        }),
                         ir::NodeMembershipSet::Index {
                             outside_label: ir::NodeMembershipOutsideLabel::Reject,
                             ..

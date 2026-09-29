@@ -76,7 +76,11 @@ pub(in crate::rules) fn stream_pipeline_op_contract(
                 with_cardinality(delivered, upper),
                 storage.index_membership_filter(
                     set,
-                    label_domain,
+                    label_domain.map(|(read, label_rows)| cost::MembershipLabelDomain {
+                        read,
+                        label_rows,
+                        predicate: plan.predicate().as_ref(),
+                    }),
                     plan.residual().map(AsRef::as_ref),
                     rows,
                     matches,
@@ -249,8 +253,8 @@ pub(in crate::rules) fn stream_pipeline_op_contract(
 }
 
 /// What a membership reads before it probes rows: the set read, the
-/// label-domain bitmap read alongside it when outside-label nodes need one,
-/// and the rows the set is estimated to hold.
+/// label-domain bitmap read alongside it with the label's nodes when
+/// outside-label nodes need one, and the rows the set is estimated to hold.
 ///
 /// An index set is priced by its secondary-ID reads, exactly like the same
 /// set as a source. A `$label` set reads one bitmap per label concurrently.
@@ -260,7 +264,7 @@ pub(in crate::rules) fn membership_set_cost(
     stats: &context::StatsSnapshot,
 ) -> (
     cost::CostVector,
-    Option<cost::CostVector>,
+    Option<(cost::CostVector, cost::EstimatedRows)>,
     cost::EstimatedRows,
 ) {
     match plan.set() {
@@ -314,7 +318,8 @@ pub(in crate::rules) fn membership_labels_cost(
     )
 }
 
-/// Label bitmap read needed to drop label nodes outside the set.
+/// Label bitmap read needed to drop label nodes outside the set, and the
+/// nodes the label holds.
 ///
 /// Label-scoped predicates reject other labels without the bitmap.
 pub(in crate::rules) fn membership_label_domain_cost(
@@ -322,11 +327,12 @@ pub(in crate::rules) fn membership_label_domain_cost(
     label: &ir::NonEmptyString,
     stats: &context::StatsSnapshot,
     storage: &cost::StorageCostProfile,
-) -> Option<cost::CostVector> {
+) -> Option<(cost::CostVector, cost::EstimatedRows)> {
     match outside_label {
         ir::NodeMembershipOutsideLabel::Reject => None,
         ir::NodeMembershipOutsideLabel::Evaluate => {
-            Some(storage.bitmap_equality_lookup(node_label_rows(label, stats, storage)))
+            let rows = node_label_rows(label, stats, storage);
+            Some((storage.bitmap_equality_lookup(rows), rows))
         }
     }
 }

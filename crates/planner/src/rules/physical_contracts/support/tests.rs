@@ -389,6 +389,15 @@ fn membership_contract_prices_what_the_runtime_reads() {
     assert_eq!(huge.authoritative_graph_reads, 0);
     let (_, _, huge_reject) = price(&scoped, &unbounded, 1_000, &huge_label);
     assert_eq!(huge_reject, reject);
+
+    // A stream longer than the label carries other-label nodes, and under the
+    // `Evaluate` policy each of them reads its record for the predicate.
+    let small_label = crate::context::StatsSnapshot::default()
+        .with_node_label_cardinality(ir::NonEmptyString::new("Attribute").unwrap(), 100);
+    let (_, _, small) = price(&unscoped, &unbounded, 1_000, &small_label);
+    assert_eq!(small.authoritative_graph_reads, 900);
+    let (_, _, small_reject) = price(&scoped, &unbounded, 1_000, &small_label);
+    assert_eq!(small_reject.authoritative_graph_reads, 0);
 }
 
 #[test]

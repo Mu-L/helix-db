@@ -13,8 +13,23 @@
 //! children it reads at once, and `width * floor(reads / width) <= reads`, so a
 //! `Union` nested in an `Intersect` cannot multiply the concurrency. An ordered
 //! range driver still runs only after all of its filters are resolved.
+//!
+//! Every child read beyond the first of a composite also takes one of the
+//! request's [`SharedIndexReads`], which every step context of the request
+//! shares, parallel steps included. A composite that finds none free reads
+//! its children one at a time, as it did before reads were concurrent. So one
+//! request keeps at most
+//!
+//! ```text
+//! concurrent resolves + PARALLEL_INDEX_READS - 1
+//! ```
+//!
+//! index reads in flight, where a concurrent resolve is one set read by one
+//! step at a time (a membership with an `Evaluate` policy counts twice: its
+//! set and its label bitmap). A lone set still reaches the full per-set bound.
 
 use core::num::NonZeroUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::future::BoxFuture;
 use futures::{future, stream, FutureExt, Stream, StreamExt, TryStreamExt};
@@ -31,6 +46,47 @@ use crate::error::Result;
 /// planner's `max_parallel_kv_reads`, so pricing and execution share one bound.
 pub(in crate::execution::interpreter) const PARALLEL_INDEX_READS: NonZeroUsize =
     helix_planner::cost::MAX_PARALLEL_KV_READS;
+
+/// Concurrent child reads one request may add beyond one read per set it is
+/// resolving, shared by every step context of the request.
+///
+/// A composite takes what is free when it starts reading and returns it when
+/// its read ends; taking never waits, so no set can block on another.
+#[derive(Debug)]
+pub(in crate::execution::interpreter) struct SharedIndexReads(AtomicUsize);
+
+impl Default for SharedIndexReads {
+    fn default() -> Self {
+        Self(AtomicUsize::new(PARALLEL_INDEX_READS.get() - 1))
+    }
+}
+
+impl SharedIndexReads {
+    /// Take up to `wanted` extra reads, as many as are free now.
+    fn take(&self, wanted: usize) -> ExtraIndexReads<'_> {
+        let (Ok(free) | Err(free)) =
+            self.0
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |free| {
+                    Some(free - free.min(wanted))
+                });
+        ExtraIndexReads {
+            pool: self,
+            taken: free.min(wanted),
+        }
+    }
+}
+
+/// Extra reads one composite holds until its read ends.
+struct ExtraIndexReads<'a> {
+    pool: &'a SharedIndexReads,
+    taken: usize,
+}
+
+impl Drop for ExtraIndexReads<'_> {
+    fn drop(&mut self) {
+        self.pool.0.fetch_add(self.taken, Ordering::SeqCst);
+    }
+}
 
 /// Intersect `children` in the order they arrive.
 ///
@@ -119,9 +175,12 @@ impl<'db> ExecutionContext<'db> {
     /// At most `width = min(children, reads)` children are read at once, and
     /// each child gets `reads / width` (at least 1) of the budget for its own
     /// children. A nested set therefore never keeps more than `reads` leaf
-    /// reads in flight at any depth. Results, and so the first error, arrive in
-    /// plan order. Later children may already be in flight, and they are
-    /// dropped when an earlier child fails.
+    /// reads in flight at any depth. Every child beyond the first also needs
+    /// one of the request's [`SharedIndexReads`], taken once when the stream
+    /// is created, so a busy request narrows `width`, down to one child at a
+    /// time. Results, and so the first error, arrive in plan order. Later
+    /// children may already be in flight, and they are dropped when an
+    /// earlier child fails.
     pub(in crate::execution::interpreter) fn read_children<'a, C: ?Sized + 'a, T: 'a>(
         &'a self,
         children: Vec<&'a C>,
@@ -129,10 +188,16 @@ impl<'db> ExecutionContext<'db> {
         read: impl Fn(&'a C, NonZeroUsize) -> BoxFuture<'a, Result<T>> + 'a,
     ) -> impl Stream<Item = Result<T>> + 'a {
         // `buffered(0)` would never poll a child, so an empty list keeps width 1.
-        let width = children.len().clamp(1, reads.get());
+        let extra = self
+            .shared_index_reads
+            .take(children.len().clamp(1, reads.get()) - 1);
+        let width = 1 + extra.taken;
         let budget = NonZeroUsize::new(reads.get() / width).unwrap_or(NonZeroUsize::MIN);
         stream::iter(children)
             .map(move |child| {
+                // The closure owns the extra reads, so they return to the
+                // request when the stream is dropped.
+                let _extra = &extra;
                 let child = read(child, budget);
                 // Tests count the child from its creation until it finishes.
                 #[cfg(test)]
@@ -150,32 +215,44 @@ impl<'db> ExecutionContext<'db> {
     }
 
     /// Resolve the filters of an ordered node intersection concurrently, in
-    /// plan order, to one bitmap each.
-    pub(in crate::execution::interpreter) async fn node_secondary_filter_bitmaps(
+    /// plan order, and intersect them into the one bitmap the range driver
+    /// checks.
+    ///
+    /// Intersecting before the driver runs keeps one bitmap no larger than the
+    /// smallest filter alive for the scan, one probe per driver entry, and lets
+    /// disjoint non-empty filters skip the range scan entirely.
+    pub(in crate::execution::interpreter) async fn node_secondary_filter_intersection(
         &self,
         filters: &[exec::ExecNodeSecondarySetPlan],
         reads: NonZeroUsize,
-    ) -> Result<Vec<RoaringTreemap>> {
-        self.read_children(filters.iter().collect(), reads, |filter, reads| {
-            self.node_secondary_ids(filter, None, reads)
-        })
-        .map_ok(SecondaryIds::into_bitmap)
-        .try_collect()
+    ) -> Result<RoaringTreemap> {
+        intersection(
+            self.read_children(filters.iter().collect(), reads, |filter, reads| {
+                self.node_secondary_ids(filter, None, reads)
+            })
+            .map_ok(SecondaryIds::into_bitmap),
+        )
         .await
     }
 
     /// Resolve the filters of an ordered edge intersection concurrently, in
-    /// plan order, to one bitmap each.
-    pub(in crate::execution::interpreter) async fn edge_secondary_filter_bitmaps(
+    /// plan order, and intersect them into the one bitmap the range driver
+    /// checks.
+    ///
+    /// Intersecting before the driver runs keeps one bitmap no larger than the
+    /// smallest filter alive for the scan, one probe per driver entry, and lets
+    /// disjoint non-empty filters skip the range scan entirely.
+    pub(in crate::execution::interpreter) async fn edge_secondary_filter_intersection(
         &self,
         filters: &[exec::ExecEdgeSecondarySetPlan],
         reads: NonZeroUsize,
-    ) -> Result<Vec<RoaringTreemap>> {
-        self.read_children(filters.iter().collect(), reads, |filter, reads| {
-            self.edge_secondary_ids(filter, None, reads)
-        })
-        .map_ok(SecondaryIds::into_bitmap)
-        .try_collect()
+    ) -> Result<RoaringTreemap> {
+        intersection(
+            self.read_children(filters.iter().collect(), reads, |filter, reads| {
+                self.edge_secondary_ids(filter, None, reads)
+            })
+            .map_ok(SecondaryIds::into_bitmap),
+        )
         .await
     }
 
@@ -385,13 +462,15 @@ impl<'db> ExecutionContext<'db> {
                 .await
                 .map(SecondaryIds::Unordered),
                 exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters } => {
-                    let filters = self.node_secondary_filter_bitmaps(filters, reads).await?;
+                    let allowed = self
+                        .node_secondary_filter_intersection(filters, reads)
+                        .await?;
                     self.range_index_ids(
                         crate::index_lifecycle::IndexElementKind::Node,
                         &driver.key,
                         &driver.range,
                         driver.iteration,
-                        &filters,
+                        core::slice::from_ref(&allowed),
                         range_limit,
                     )
                     .await
@@ -497,13 +576,15 @@ impl<'db> ExecutionContext<'db> {
                 .await
                 .map(SecondaryIds::Unordered),
                 exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, filters } => {
-                    let filters = self.edge_secondary_filter_bitmaps(filters, reads).await?;
+                    let allowed = self
+                        .edge_secondary_filter_intersection(filters, reads)
+                        .await?;
                     self.range_index_ids(
                         crate::index_lifecycle::IndexElementKind::Edge,
                         &driver.key,
                         &driver.range,
                         driver.iteration,
-                        &filters,
+                        core::slice::from_ref(&allowed),
                         range_limit,
                     )
                     .await

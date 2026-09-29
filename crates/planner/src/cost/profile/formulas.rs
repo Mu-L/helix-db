@@ -9,6 +9,18 @@ use super::{
     UniqueEqualityRows,
 };
 
+/// Label domain of an index membership whose nodes outside the set label
+/// evaluate the whole predicate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MembershipLabelDomain<'p> {
+    /// Reading the label bitmap, alongside the set.
+    pub read: CostVector,
+    /// Nodes carrying the set label.
+    pub label_rows: EstimatedRows,
+    /// Whole filter predicate, evaluated by nodes of other labels.
+    pub predicate: &'p Predicate,
+}
+
 impl StorageCostProfile {
     /// Estimate rows for a unique equality lookup.
     ///
@@ -288,33 +300,47 @@ impl StorageCostProfile {
     /// Cost a row-preserving node index membership filter.
     ///
     /// The interpreter reads `set` once per request, concurrently with the
-    /// `label_domain` bitmap when outside-label nodes need it, probes the set
-    /// once per stream row, and evaluates `residual` only for the `matches`
-    /// rows the set keeps, never for more than the `rows` it sees. Rows the
-    /// set cannot decide are priced as label rows, since an unscoped predicate
-    /// uses an index set only when one label answers it.
+    /// label bitmap of a `label_domain` when outside-label nodes need it,
+    /// probes the set once per stream row, and evaluates `residual` only for
+    /// the `matches` rows the set keeps, never for more than the `rows` it
+    /// sees. Under a label domain, nodes of other labels evaluate the whole
+    /// predicate and read their records: at least `rows - label_rows` of the
+    /// stream carry another label, so that many rows are priced as a residual
+    /// filter of the whole predicate. A stream no longer than the label is
+    /// priced as label rows, which the bitmap decides.
     ///
     /// ```
     /// use helix_ast::expr::Predicate;
-    /// use helix_planner::cost::{EstimatedRows, StorageCostProfile};
+    /// use helix_planner::cost::{EstimatedRows, MembershipLabelDomain, StorageCostProfile};
     /// let profile = StorageCostProfile::default();
     /// let rows = EstimatedRows::rows;
     /// let set = profile.bitmap_equality_lookup(rows(10));
-    /// let label = profile.bitmap_equality_lookup(rows(1_000));
+    /// let kind = Predicate::eq("kind", "B");
+    /// let label = MembershipLabelDomain {
+    ///     read: profile.bitmap_equality_lookup(rows(1_000)),
+    ///     label_rows: rows(1_000),
+    ///     predicate: &kind,
+    /// };
     ///
     /// // Without a residual no record is read, however long the stream.
     /// for n in [1, 257, 1_000_000] {
     ///     let scoped = profile.index_membership_filter(set, None, None, rows(n), rows(10));
     ///     assert_eq!(scoped.authoritative_graph_reads, 0);
     ///     assert_eq!(scoped.object_reads, 1);
+    /// }
+    ///
+    /// // Under a label domain, rows beyond the label evaluate the predicate.
+    /// for (n, outside) in [(1, 0), (1_000, 0), (1_000_000, 999_000)] {
     ///     let unscoped = profile.index_membership_filter(set, Some(label), None, rows(n), rows(10));
-    ///     assert_eq!(unscoped.authoritative_graph_reads, 0);
-    ///     assert_eq!(unscoped.object_reads, 2);
+    ///     assert_eq!(unscoped.authoritative_graph_reads, outside);
+    ///     assert_eq!(unscoped.object_reads, 2 + outside);
     /// }
     ///
     /// // The label domain is read alongside the set: the slower read, not both.
     /// let both = profile.index_membership_filter(set, Some(label), None, rows(1), rows(10));
-    /// assert!(both.latency.as_micros() < set.latency.as_micros() + label.latency.as_micros());
+    /// assert!(
+    ///     both.latency.as_micros() < set.latency.as_micros() + label.read.latency.as_micros()
+    /// );
     ///
     /// // A residual reads the records of set matches only, at most the stream.
     /// let title = Predicate::contains("title", "x");
@@ -326,19 +352,25 @@ impl StorageCostProfile {
     pub fn index_membership_filter(
         &self,
         set: CostVector,
-        label_domain: Option<CostVector>,
+        label_domain: Option<MembershipLabelDomain<'_>>,
         residual: Option<&Predicate>,
         rows: EstimatedRows,
         matches: EstimatedRows,
     ) -> CostVector {
-        label_domain
-            .map_or(set, |label| {
-                self.parallel(&[set, label], PositiveUsize::at_least_one(2))
-            })
-            .serial(self.secondary_set_operation(rows))
+        let (sets, outside) = label_domain.map_or((set, CostVector::ZERO), |domain| {
+            (
+                self.parallel(&[set, domain.read], PositiveUsize::at_least_one(2)),
+                self.residual_filter(
+                    domain.predicate,
+                    EstimatedRows::rows(rows.as_rows().saturating_sub(domain.label_rows.as_rows())),
+                ),
+            )
+        });
+        sets.serial(self.secondary_set_operation(rows))
             .serial(residual.map_or(CostVector::ZERO, |residual| {
                 self.residual_filter(residual, matches.min(rows))
             }))
+            .serial(outside)
     }
 
     /// Cost residual predicate evaluation for a row estimate.

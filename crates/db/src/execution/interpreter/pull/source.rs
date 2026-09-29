@@ -281,8 +281,8 @@ impl<'a> Source<'a> {
             Plan::Access(A::Node(N::SecondarySet {
                 set: exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters },
             })) => {
-                let membership = ctx
-                    .node_secondary_filter_bitmaps(filters, access::PARALLEL_INDEX_READS)
+                let allowed = ctx
+                    .node_secondary_filter_intersection(filters, access::PARALLEL_INDEX_READS)
                     .await?;
                 self.open_range(
                     ctx,
@@ -290,15 +290,15 @@ impl<'a> Source<'a> {
                     &driver.key,
                     &driver.range,
                     driver.iteration,
-                    membership,
+                    vec![allowed],
                 )
                 .await
             }
             Plan::Access(A::Edge(E::SecondarySet {
                 set: exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, filters },
             })) => {
-                let membership = ctx
-                    .edge_secondary_filter_bitmaps(filters, access::PARALLEL_INDEX_READS)
+                let allowed = ctx
+                    .edge_secondary_filter_intersection(filters, access::PARALLEL_INDEX_READS)
                     .await?;
                 self.open_range(
                     ctx,
@@ -306,7 +306,7 @@ impl<'a> Source<'a> {
                     &driver.key,
                     &driver.range,
                     driver.iteration,
-                    membership,
+                    vec![allowed],
                 )
                 .await
             }

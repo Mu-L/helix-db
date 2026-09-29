@@ -3661,6 +3661,63 @@ async fn set_children_are_read_concurrently_up_to_the_bound() {
     assert_eq!(peak.load(Ordering::SeqCst), 2);
 }
 
+#[tokio::test]
+async fn disjoint_ordered_filters_skip_the_range_driver() {
+    use std::sync::atomic::Ordering;
+
+    let (db, _) = concurrent_set_fixture("access-ordered-disjoint-filters").await;
+    let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+    context.enable_request_read_view().await.unwrap();
+    let ordered = |filters: Vec<exec::ExecNodeSecondarySetPlan>| {
+        exec::ExecNodeSecondarySetPlan::OrderedIntersect {
+            driver: exec::ExecNodeSecondaryRangePlan {
+                iteration: helix_planner::ir::RangeScanIteration::Forward,
+                index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                    "node_range:User:rank:asc",
+                )),
+                key: catalog::ScopedPropertyDirectionKey::try_new(
+                    "User",
+                    "rank",
+                    helix_ast::index::RangeIndexDirection::Asc,
+                )
+                .unwrap(),
+                range: ir::IndexRange::All,
+            },
+            filters: ir::AtLeast::<_, 1>::try_from_vec(filters).unwrap(),
+        }
+    };
+
+    // `paused` and `gold` each match a user, but never the same one.
+    let disjoint = ordered(vec![
+        user_equality("node_eq:User:status", "status", "paused"),
+        user_equality("node_eq:User:tier", "tier", "gold"),
+    ]);
+    assert_eq!(
+        context
+            .node_secondary_set_ids(&disjoint, None)
+            .await
+            .unwrap(),
+        Vec::<u64>::new()
+    );
+    assert_eq!(context.range_reads.entries.load(Ordering::Relaxed), 0);
+
+    // Overlapping filters still drive the range in order.
+    let overlapping = ordered(vec![
+        user_equality("node_eq:User:status", "status", "active"),
+        user_equality("node_eq:User:tier", "tier", "gold"),
+    ]);
+    assert_eq!(
+        context
+            .node_secondary_set_ids(&overlapping, None)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(context.range_reads.entries.load(Ordering::Relaxed) > 0);
+    context.close_request_read_view().unwrap();
+}
+
 #[tokio::test(start_paused = true)]
 async fn read_children_yields_results_and_the_first_error_in_plan_order() {
     use futures::{FutureExt, TryStreamExt};
@@ -3764,6 +3821,35 @@ async fn nested_sets_never_exceed_the_read_budget() {
             "reads={reads}"
         );
     }
+}
+
+/// Sets resolved at once, by one step or by parallel steps sharing the
+/// request's pool, add at most `PARALLEL_INDEX_READS - 1` reads beyond one
+/// each, and the pool refills when they finish.
+#[tokio::test(start_paused = true)]
+async fn concurrent_sets_share_one_request_read_budget() {
+    let db = test_support::open_db("access-read-children-request-budget").await;
+    let context = ExecutionContext::new(&db, context::ParamBindings::default());
+    let wide = ReadTree::Set((0..20).map(|_| ReadTree::Leaf).collect());
+    let reads = crate::execution::interpreter::access::PARALLEL_INDEX_READS;
+    let live = LiveLeaves::default();
+    futures::try_join!(
+        read_tree(&context, &wide, reads, &live),
+        read_tree(&context, &wide, reads, &live),
+        read_tree(&context, &wide, reads, &live),
+    )
+    .unwrap();
+    assert_eq!(
+        live.peak.load(std::sync::atomic::Ordering::SeqCst),
+        reads.get() + 2
+    );
+
+    let live = LiveLeaves::default();
+    read_tree(&context, &wide, reads, &live).await.unwrap();
+    assert_eq!(
+        live.peak.load(std::sync::atomic::Ordering::SeqCst),
+        reads.get()
+    );
 }
 
 #[tokio::test]

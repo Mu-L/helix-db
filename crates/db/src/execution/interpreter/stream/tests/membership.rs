@@ -915,6 +915,45 @@ async fn resolved_memberships_are_reused_across_executions_of_one_plan() {
     ctx.close_request_read_view().unwrap();
 }
 
+/// Every `ForEach` frame clears the cache, so a body that decides a node row
+/// resolves its membership set once per frame, however few rows it streams.
+/// This pins the known per-frame cost until the cache survives frames whose
+/// parameters the plan does not read.
+#[tokio::test]
+async fn foreach_frames_resolve_membership_once_each() {
+    let fixture = fixture("membership-foreach-frames").await;
+    let item = name("item");
+    let items = name("items");
+    let body = test_support::subplan(
+        vec![
+            node_access_step(1, item.clone()),
+            test_support::step(
+                2,
+                vec![exec::ExecStepId::new(1).unwrap()],
+                membership(kind_equality(literal("B")), Predicate::eq("kind", "B")),
+            ),
+        ],
+        2,
+    );
+    let frames = [fixture.attribute_b, fixture.note_b, fixture.attribute_a];
+    let mut ctx = ExecutionContext::new(
+        &fixture.db,
+        context::ParamBindings::default().with_value(
+            items.clone(),
+            PropertyValue::array(frames.map(|id| {
+                PropertyValue::object([(item.to_string(), PropertyValue::I64(id as i64))])
+            })),
+        ),
+    );
+    ctx.enable_request_read_view().await.unwrap();
+    let last = ctx.execute_foreach(&items, &body).await.unwrap();
+    // The last frame's `attribute_a` has kind `A`.
+    assert_eq!(last, ExecutionValue::Stream(Vec::new()));
+    assert_eq!(resolved(&fixture.db), frames.len());
+    assert_eq!(ctx.prepared_memberships.len(), 0);
+    ctx.close_request_read_view().unwrap();
+}
+
 /// A NaN constant makes a plan unequal to itself, so no lookup could find a
 /// stored entry. Such a plan resolves on every execution instead of keeping
 /// one set per execution until the request ends.

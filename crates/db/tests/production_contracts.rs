@@ -6752,15 +6752,6 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
     };
     let is_membership =
         |step: &exec::ExecStep| matches!(step.op, exec::ExecOp::IndexMembership { .. });
-    // Without a catalog a label-scoped filter still reads the `$label` bitmap,
-    // but never a secondary index.
-    let is_index_set_membership = |step: &exec::ExecStep| {
-        matches!(
-            &step.op,
-            exec::ExecOp::IndexMembership { plan }
-                if matches!(plan.set, exec::ExecNodeMembershipSet::Index { .. })
-        )
-    };
     let bind = |name: &str, value: PropertyValue| {
         context::ParamBindings::default().with_value(
             ir::NonEmptyString::new(name).expect("parameter name is non-empty"),
@@ -6949,27 +6940,31 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         } else {
             vec![unscoped.clone()]
         };
-        let scoped = Predicate::and(
-            core::iter::once(Predicate::eq("$label", "Attribute"))
-                .chain(conjuncts)
-                .collect(),
-        );
+        let scoped = |label: Predicate| {
+            Predicate::and(core::iter::once(label).chain(conjuncts.clone()).collect())
+        };
+        // The per-row oracle states the label test as a negated inequality,
+        // which is not a finite `$label` domain, so without the catalog it
+        // plans a true per-row filter instead of a `$label` membership.
+        let scoped_per_row = scoped(Predicate::not(Predicate::neq("$label", "Attribute")));
+        let scoped = scoped(Predicate::eq("$label", "Attribute"));
         let attributes = expected
             .iter()
             .copied()
             .filter(|uid| uid.starts_with('a'))
             .collect::<Vec<_>>();
-        for (predicate, expected, planned) in
-            [(unscoped, expected, indexed), (scoped, attributes, true)]
-        {
-            let filtered = |group: &str| {
+        for (predicate, oracle, expected, planned) in [
+            (unscoped.clone(), unscoped, expected, indexed),
+            (scoped, scoped_per_row, attributes, true),
+        ] {
+            let filtered = |group: &str, predicate: &Predicate| {
                 traversal::g()
                     .n_with_label_where("Group", Predicate::eq("uid", group))
                     .in_(Some("IN_GROUP"))
                     .out(Some("HAS"))
                     .where_(predicate.clone())
             };
-            let wide = || {
+            let wide = |predicate: &Predicate| {
                 traversal::g()
                     .n_with_label_where("Group", Predicate::eq("uid", "wide"))
                     .out(Some("HAS"))
@@ -6977,27 +6972,40 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                     .out(Some("HAS"))
                     .where_(predicate.clone())
             };
-            for (shape, checked) in [
-                (filtered("g").values(vec!["uid"]), true),
-                (filtered("g").limit(2_usize).values(vec!["uid"]), false),
-                (filtered("g").count(), false),
-                (filtered("empty").values(vec!["uid"]), false),
-                (filtered("empty").limit(2_usize).values(vec!["uid"]), false),
-                (wide().values(vec!["uid"]), false),
-                (wide().count(), false),
-            ] {
+            let shapes = |predicate: &Predicate| {
+                [
+                    filtered("g", predicate).values(vec!["uid"]),
+                    filtered("g", predicate).limit(2_usize).values(vec!["uid"]),
+                    filtered("g", predicate).count(),
+                    filtered("empty", predicate).values(vec!["uid"]),
+                    filtered("empty", predicate)
+                        .limit(2_usize)
+                        .values(vec!["uid"]),
+                    wide(predicate).values(vec!["uid"]),
+                    wide(predicate).count(),
+                ]
+            };
+            for (index, (shape, oracle_shape)) in shapes(&predicate)
+                .into_iter()
+                .zip(shapes(&oracle))
+                .enumerate()
+            {
+                let checked = index == 0;
                 let read = batch::read_batch()
                     .var_as("result", shape)
+                    .returning(["result"]);
+                let oracle_read = batch::read_batch()
+                    .var_as("result", oracle_shape)
                     .returning(["result"]);
                 let membership =
                     planning::plan_read_batch(&read, &with_catalog).unwrap_or_else(|error| {
                         panic!("{predicate:?} plans with the catalog: {error}")
                     });
-                let per_row =
-                    planning::plan_read_batch(&read, &without_catalog).unwrap_or_else(|error| {
-                        panic!("{predicate:?} plans without the catalog: {error}")
+                let per_row = planning::plan_read_batch(&oracle_read, &without_catalog)
+                    .unwrap_or_else(|error| {
+                        panic!("{oracle:?} plans without the catalog: {error}")
                     });
-                assert!(!per_row.steps().iter().any(is_index_set_membership));
+                assert!(!per_row.steps().iter().any(is_membership), "{oracle:?}");
                 let membership_rows = db
                     .execute(&membership, params.clone())
                     .await
