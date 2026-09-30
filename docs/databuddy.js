@@ -55,9 +55,15 @@
     if (!anonId) return;
     url.searchParams.set("anonId", anonId);
     if (sessionId) url.searchParams.set("sessionId", sessionId);
+    const original = anchor.getAttribute("href");
     anchor.href = url.toString();
+    // The browser has taken the link by the time this runs, so restore it and
+    // leave no IDs in the page for a later copy or share.
+    window.setTimeout(() => anchor.setAttribute("href", original), 0);
   }
 
   document.addEventListener("click", handOff, true);
   document.addEventListener("auxclick", handOff, true);
+  // "Open in new tab" from the context menu fires neither click event.
+  document.addEventListener("contextmenu", handOff, true);
 })();
