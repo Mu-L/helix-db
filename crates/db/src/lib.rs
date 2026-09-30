@@ -811,6 +811,15 @@ struct HelixDBInner {
     /// tells tests that a request really read a set.
     #[cfg(test)]
     resolved_index_memberships: std::sync::atomic::AtomicUsize,
+    /// Secondary-set children that any concurrent set read has created and
+    /// not yet finished. A child counts from the moment the bounded stream
+    /// creates its read, before the read is first polled.
+    #[cfg(test)]
+    index_child_reads_in_flight: std::sync::atomic::AtomicUsize,
+    /// The highest `index_child_reads_in_flight` seen. Tests reset it with
+    /// `store(0)` before the read they measure.
+    #[cfg(test)]
+    peak_index_child_reads: std::sync::atomic::AtomicUsize,
 }
 
 /// Non-forgeable evidence that planning observed one exact runtime catalog.
@@ -1605,6 +1614,10 @@ impl HelixDB {
                 close_state: Mutex::new(CloseState::Open),
                 #[cfg(test)]
                 resolved_index_memberships: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(test)]
+                index_child_reads_in_flight: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(test)]
+                peak_index_child_reads: std::sync::atomic::AtomicUsize::new(0),
                 config,
             }),
         }
